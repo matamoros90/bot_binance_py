@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V2.0 - Trailing SL + Fear & Greed + Temporalidades Dinámicas
+# V2.5 - Trailing SL + Fear & Greed + Funding Fees Protection
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -15,7 +15,7 @@ load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL
+# CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 CONFIANZA_MINIMA = 0.70   # 70% - Solo operaciones de alta certeza
@@ -32,6 +32,14 @@ MAX_POSICIONES = 3        # Máximo 3 posiciones simultáneas
 # ═══════════════════════════════════════════════════════════════════════════════
 TRAILING_SL_PERCENT = 0.015  # 1.5% - distancia del trailing
 MONITOREO_INTERVALO = 30     # Segundos entre monitoreo de posiciones
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROTECCIÓN CONTRA FUNDING FEES (V2.5)
+# ═══════════════════════════════════════════════════════════════════════════════
+FUNDING_PROTECTION = True       # Activar protección de funding
+MAX_DIAS_POSICION = 5           # Cerrar posiciones después de 5 días
+TP_DINAMICO_DIAS = 3            # Después de 3 días, ajustar TP
+TP_DINAMICO_PERCENT = 0.02      # TP reducido a 2% después de X días
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
@@ -60,7 +68,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V2.0 ALIVE - TRAILING SL ACTIVE")
+            self.wfile.write(b"BINANCE BOT V2.5 ALIVE - FUNDING PROTECTION ACTIVE")
         def log_message(self, format, *args):
             pass
     try:
@@ -352,6 +360,231 @@ def actualizar_trailing_sl(client):
                         
     except Exception as e:
         log(f"⚠️ Error en trailing SL: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROTECCIÓN FUNDING FEES - CIERRE POR TIEMPO MÁXIMO
+# ═══════════════════════════════════════════════════════════════════════════════
+def verificar_tiempo_posiciones(client):
+    """Cierra posiciones que excedan MAX_DIAS_POSICION días"""
+    try:
+        positions = client.futures_position_information()
+        
+        for pos in positions:
+            symbol = pos['symbol']
+            cantidad = float(pos.get('positionAmt', 0))
+            
+            if cantidad == 0:
+                continue
+            
+            # Obtener trades recientes para encontrar fecha de entrada
+            try:
+                trades = client.futures_account_trades(symbol=symbol, limit=50)
+                if not trades:
+                    continue
+                
+                # Encontrar el trade de apertura más antiguo para esta posición
+                trade_apertura = None
+                for trade in trades:
+                    if trade.get('realizedPnl', '0') == '0' or float(trade.get('realizedPnl', 0)) == 0:
+                        # Trade de apertura (sin PnL realizado)
+                        trade_apertura = trade
+                        break
+                
+                if not trade_apertura:
+                    continue
+                
+                # Calcular días desde apertura
+                timestamp_apertura = int(trade_apertura['time'])
+                fecha_apertura = datetime.fromtimestamp(timestamp_apertura / 1000)
+                dias_abierto = (datetime.now() - fecha_apertura).days
+                
+                if dias_abierto >= MAX_DIAS_POSICION:
+                    side = 'SELL' if cantidad > 0 else 'BUY'
+                    entry_price = float(pos['entryPrice'])
+                    mark_price = float(pos['markPrice'])
+                    pnl = float(pos.get('unRealizedProfit', 0))
+                    
+                    log(f"⏰ Cerrando {symbol} por tiempo: {dias_abierto} días (máx: {MAX_DIAS_POSICION})")
+                    
+                    # Cerrar posición
+                    client.futures_create_order(
+                        symbol=symbol,
+                        side=side,
+                        type='MARKET',
+                        quantity=abs(cantidad)
+                    )
+                    
+                    enviar_telegram(f"""⏰ *CIERRE POR TIEMPO* BINANCE
+*Par:* `{symbol}`
+*Días abierto:* `{dias_abierto}` (máx: {MAX_DIAS_POSICION})
+*Entry:* `${entry_price:.4f}`
+*Exit:* `${mark_price:.4f}`
+*PNL estimado:* `${pnl:.2f}`
+*Razón:* Protección funding fees V2.5""")
+                    
+            except Exception as e:
+                log(f"⚠️ Error verificando tiempo de {symbol}: {e}")
+                
+    except Exception as e:
+        log(f"⚠️ Error en verificar_tiempo_posiciones: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROTECCIÓN FUNDING FEES - CIERRE SI FUNDING > PNL
+# ═══════════════════════════════════════════════════════════════════════════════
+def verificar_funding_vs_pnl(client):
+    """Cierra posiciones donde los funding fees superan las ganancias"""
+    try:
+        positions = client.futures_position_information()
+        
+        for pos in positions:
+            symbol = pos['symbol']
+            cantidad = float(pos.get('positionAmt', 0))
+            
+            if cantidad == 0:
+                continue
+            
+            unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+            
+            # Obtener funding fees acumulados
+            try:
+                # Obtener income de los últimos 7 días
+                income = client.futures_income_history(
+                    symbol=symbol,
+                    incomeType='FUNDING_FEE',
+                    limit=100
+                )
+                
+                total_funding = sum(float(i.get('income', 0)) for i in income)
+                
+                # Si el funding (negativo) supera el PNL positivo → cerrar
+                if unrealized_pnl > 0 and abs(total_funding) > unrealized_pnl:
+                    side = 'SELL' if cantidad > 0 else 'BUY'
+                    entry_price = float(pos['entryPrice'])
+                    mark_price = float(pos['markPrice'])
+                    
+                    log(f"💸 Cerrando {symbol}: Funding ${total_funding:.2f} > PNL ${unrealized_pnl:.2f}")
+                    
+                    # Cerrar posición
+                    client.futures_create_order(
+                        symbol=symbol,
+                        side=side,
+                        type='MARKET',
+                        quantity=abs(cantidad)
+                    )
+                    
+                    enviar_telegram(f"""💸 *CIERRE FUNDING > PNL* BINANCE
+*Par:* `{symbol}`
+*Unrealized PNL:* `${unrealized_pnl:.2f}`
+*Funding pagado:* `${total_funding:.2f}`
+*Entry:* `${entry_price:.4f}`
+*Exit:* `${mark_price:.4f}`
+*Razón:* Fees superan ganancias V2.5""")
+                    
+            except Exception as e:
+                # API puede no soportar income_history en testnet
+                pass
+                
+    except Exception as e:
+        log(f"⚠️ Error en verificar_funding_vs_pnl: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROTECCIÓN FUNDING FEES - TAKE PROFIT DINÁMICO
+# ═══════════════════════════════════════════════════════════════════════════════
+def ajustar_tp_dinamico(client):
+    """Reduce el TP después de X días para asegurar ganancias"""
+    try:
+        positions = client.futures_position_information()
+        
+        for pos in positions:
+            symbol = pos['symbol']
+            cantidad = float(pos.get('positionAmt', 0))
+            
+            if cantidad == 0:
+                continue
+            
+            unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+            entry_price = float(pos['entryPrice'])
+            mark_price = float(pos['markPrice'])
+            
+            # Solo si está en ganancia
+            if unrealized_pnl <= 0:
+                continue
+            
+            # Verificar días abierto
+            try:
+                trades = client.futures_account_trades(symbol=symbol, limit=50)
+                if not trades:
+                    continue
+                
+                trade_apertura = None
+                for trade in trades:
+                    if float(trade.get('realizedPnl', 0)) == 0:
+                        trade_apertura = trade
+                        break
+                
+                if not trade_apertura:
+                    continue
+                
+                timestamp_apertura = int(trade_apertura['time'])
+                fecha_apertura = datetime.fromtimestamp(timestamp_apertura / 1000)
+                dias_abierto = (datetime.now() - fecha_apertura).days
+                
+                if dias_abierto >= TP_DINAMICO_DIAS:
+                    side = 'LONG' if cantidad > 0 else 'SHORT'
+                    
+                    # Calcular nuevo TP reducido
+                    if side == 'LONG':
+                        nuevo_tp = entry_price * (1 + TP_DINAMICO_PERCENT)
+                        # Solo ajustar si el precio ya superó el nuevo TP potencial
+                        if mark_price < nuevo_tp:
+                            continue
+                    else:
+                        nuevo_tp = entry_price * (1 - TP_DINAMICO_PERCENT)
+                        if mark_price > nuevo_tp:
+                            continue
+                    
+                    # Cancelar órdenes TP existentes
+                    try:
+                        ordenes = client.futures_get_open_orders(symbol=symbol)
+                        for orden in ordenes:
+                            if orden['type'] == 'TAKE_PROFIT_MARKET':
+                                client.futures_cancel_order(symbol=symbol, orderId=orden['orderId'])
+                    except:
+                        pass
+                    
+                    # Crear nuevo TP más cercano
+                    try:
+                        info = client.futures_exchange_info()
+                        symbol_info = next((s for s in info['symbols'] if s['symbol'] == symbol), None)
+                        if symbol_info:
+                            price_precision = int(symbol_info['pricePrecision'])
+                            nuevo_tp = round(nuevo_tp, price_precision)
+                        
+                        tp_side = 'SELL' if cantidad > 0 else 'BUY'
+                        client.futures_create_order(
+                            symbol=symbol,
+                            side=tp_side,
+                            type='TAKE_PROFIT_MARKET',
+                            stopPrice=nuevo_tp,
+                            closePosition=True
+                        )
+                        
+                        log(f"📈 TP Dinámico ajustado ({symbol}): ${nuevo_tp:.4f} (días: {dias_abierto})")
+                        enviar_telegram(f"""📈 *TP DINÁMICO AJUSTADO*
+*Par:* `{symbol}`
+*Días abierto:* `{dias_abierto}`
+*Nuevo TP:* `${nuevo_tp:.4f}`
+*PNL actual:* `${unrealized_pnl:.2f}`
+*Razón:* Asegurar ganancias V2.5""")
+                        
+                    except Exception as e:
+                        log(f"⚠️ Error creando TP dinámico: {e}")
+                        
+            except Exception as e:
+                pass
+                
+    except Exception as e:
+        log(f"⚠️ Error en ajustar_tp_dinamico: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EJECUTAR ORDEN DE FUTUROS
@@ -683,8 +916,9 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     modo = "TESTNET (PRUEBA)" if USAR_TESTNET else "PRODUCCIÓN"
+    funding_status = "🟢 ACTIVA" if FUNDING_PROTECTION else "🔴 DESACTIVADA"
     
-    reporte = f"""🤖 BINANCE BOT V2.0 ONLINE
+    reporte = f"""🤖 BINANCE BOT V2.5 ONLINE
 🚀 BINANCE FUTUROS: 🟢 CONECTADO
 
 💰 BALANCE DETECTADO:
@@ -700,10 +934,15 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: {TOP_ACTIVOS}
 📉 Max posiciones: {MAX_POSICIONES}
 
-🆕 NUEVAS FUNCIONES V2.0:
+🆕 FUNCIONES V2.5:
 📍 Trailing SL: {TRAILING_SL_PERCENT*100}% activo
 ⏱️ Temporalidades: 15m, 30m, 1h, 4h
 🎭 Fear & Greed: {fg_valor} ({fg_clasificacion})
+
+💸 PROTECCIÓN FUNDING FEES: {funding_status}
+⏰ Cierre por tiempo: {MAX_DIAS_POSICION} días máx
+📈 TP dinámico: Después de {TP_DINAMICO_DIAS} días
+💵 Funding vs PNL: Auto-cierre si fees > ganancias
 
 🧠 CEREBRO IA:
 🤖 Gemini 2.0 Flash: {status_gemini}
@@ -716,8 +955,8 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V2.0...")
-log("📍 Trailing SL + Fear & Greed + Temporalidades Dinámicas")
+log("🚀 Iniciando Bot Binance Futuros V2.5...")
+log("📍 Trailing SL + Fear & Greed + Funding Fees Protection")
 
 # Conexión a Binance
 try:
@@ -758,7 +997,7 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V2.0 iniciado. Operando 24/7 con Trailing SL...")
+log("✅ Bot V2.5 iniciado. Operando 24/7 con Trailing SL + Funding Protection...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO
@@ -774,6 +1013,12 @@ while True:
         actualizar_trailing_sl(client)
         verificar_posiciones_cerradas(client)
         
+        # Protección contra Funding Fees (cada ciclo)
+        if FUNDING_PROTECTION:
+            verificar_tiempo_posiciones(client)
+            verificar_funding_vs_pnl(client)
+            ajustar_tp_dinamico(client)
+        
         # Cada N ciclos, hacer análisis completo de mercado
         if ciclo_analisis >= CICLOS_PARA_ANALISIS:
             ejecutar_trading(client, modelo)
@@ -781,7 +1026,7 @@ while True:
         else:
             pos_abiertas = contar_posiciones_abiertas(client)
             if pos_abiertas > 0:
-                log(f"👁️ Monitoreo Trailing SL... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V2.5... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
             else:
                 log(f"👁️ Sin posiciones. Próximo análisis en {(CICLOS_PARA_ANALISIS - ciclo_analisis) * MONITOREO_INTERVALO}s...")
         

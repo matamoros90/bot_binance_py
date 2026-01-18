@@ -1,10 +1,10 @@
-# 🤖 Bot Binance Futures V2.0 - Trading con IA
+# 🤖 Bot Binance Futures V2.5 - Trading con IA + Funding Protection
 
 ## 📋 Descripción
 
-Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash** como cerebro de IA para tomar decisiones de trading. Opera 24/7 con estrategia de swing trading conservador.
+Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash** como cerebro de IA para tomar decisiones de trading. Opera 24/7 con estrategia de swing trading conservador y **protección automática contra funding fees**.
 
-## 🆕 Características V2.0 (Actualizado 04/01/2026)
+## 🆕 Características V2.5 (Actualizado 18/01/2026)
 
 | Funcionalidad                | Descripción                                                         |
 | ---------------------------- | ------------------------------------------------------------------- |
@@ -12,11 +12,14 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 | **Fear & Greed Index**       | Integración con API para análisis de sentimiento del mercado        |
 | **Temporalidades Dinámicas** | 15m, 30m, 1h, 4h - La IA elige según volatilidad                    |
 | **3 Posiciones Simultáneas** | Máximo 3 operaciones abiertas a la vez                              |
-| **Sin Modo Lotes**           | El bot no se bloquea esperando cierres                              |
+| **Cierre por Tiempo**        | Cierra posiciones automáticamente después de 5 días                 |
+| **Funding vs PNL**           | Cierra si los funding fees superan las ganancias                    |
+| **TP Dinámico**              | Reduce el Take Profit después de 3 días para asegurar ganancias     |
 
 ## ⚙️ Configuración
 
 ```python
+# Trading
 CONFIANZA_MINIMA = 0.70      # 70% mínimo para operar
 ESCUDO_TRABAJO = 0.80        # 80% del balance para trading
 ESCUDO_SEGURO = 0.20         # 20% protegido
@@ -24,6 +27,12 @@ APALANCAMIENTO = 3           # x3 conservador
 TOP_ACTIVOS = 15             # Analiza top 15 por volumen
 MAX_POSICIONES = 3           # Máximo 3 posiciones
 TRAILING_SL_PERCENT = 0.015  # 1.5% trailing
+
+# Funding Fees Protection (V2.5)
+FUNDING_PROTECTION = True    # Activar protección
+MAX_DIAS_POSICION = 5        # Cerrar después de 5 días
+TP_DINAMICO_DIAS = 3         # Ajustar TP después de 3 días
+TP_DINAMICO_PERCENT = 0.02   # TP reducido a 2%
 ```
 
 ## 📊 TP/SL por Temporalidad
