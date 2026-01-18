@@ -1,22 +1,58 @@
-# 🤖 Bot Binance Futures V2.5 - Trading con IA + Funding Protection
+# 🤖 Bot Binance Futures V2.6 - Trading con IA + New GenAI SDK
 
 ## 📋 Descripción
 
 Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash** como cerebro de IA para tomar decisiones de trading. Opera 24/7 con estrategia de swing trading conservador y **protección automática contra funding fees**.
 
-## 🆕 Características V2.5 (Actualizado 18/01/2026)
+---
 
-| Funcionalidad                | Descripción                                                         |
-| ---------------------------- | ------------------------------------------------------------------- |
-| **Trailing Stop Loss 1.5%**  | SL que se mueve automáticamente cuando la posición está en ganancia |
-| **Fear & Greed Index**       | Integración con API para análisis de sentimiento del mercado        |
-| **Temporalidades Dinámicas** | 15m, 30m, 1h, 4h - La IA elige según volatilidad                    |
-| **3 Posiciones Simultáneas** | Máximo 3 operaciones abiertas a la vez                              |
-| **Cierre por Tiempo**        | Cierra posiciones automáticamente después de 5 días                 |
-| **Funding vs PNL**           | Cierra si los funding fees superan las ganancias                    |
-| **TP Dinámico**              | Reduce el Take Profit después de 3 días para asegurar ganancias     |
+## 🚀 Estado del Proyecto (Última actualización: 18/01/2026)
 
-## ⚙️ Configuración
+| Aspecto        | Estado                                 |
+| -------------- | -------------------------------------- |
+| **Versión**    | V2.6                                   |
+| **Plataforma** | Koyeb (Deploy automático desde GitHub) |
+| **Modo**       | TESTNET (Pruebas)                      |
+| **Estado**     | 🟢 Operativo                           |
+
+### 💰 Rendimiento Acumulado (TESTNET)
+
+| Período       | Balance Inicial | Balance Actual | Ganancia       | %           |
+| ------------- | --------------- | -------------- | -------------- | ----------- |
+| 04/01 - 07/01 | $5,293.49       | $5,438.59      | +$145.10       | +2.74%      |
+| 07/01 - 18/01 | $5,438.59       | **$6,576.60**  | +$1,138.01     | +20.92%     |
+| **TOTAL**     | $5,293.49       | **$6,576.60**  | **+$1,283.11** | **+24.24%** |
+
+> [!NOTE]
+> Estos resultados son en TESTNET. El rendimiento real puede variar.
+
+---
+
+## 🆕 Historial de Versiones
+
+### V2.6 (18/01/2026) - New GenAI SDK
+
+- ✅ **Migración a `google-genai`**: Eliminado el paquete deprecado `google-generativeai`
+- ✅ **Nuevo SDK oficial**: Soporte activo de Google, corrección de bugs y nuevas funciones
+- ✅ **Sin warnings de deprecación**: Logs limpios sin advertencias
+
+### V2.5 (18/01/2026) - Funding Fees Protection
+
+- ✅ **Cierre por tiempo máximo**: Posiciones se cierran automáticamente después de 5 días
+- ✅ **Funding vs PNL**: Cierra posición si los funding fees superan las ganancias
+- ✅ **TP Dinámico**: Reduce Take Profit después de 3 días para asegurar ganancias
+- 🎯 **Logro destacado**: FXSUSDT cerrado por tiempo con +$227.92 de ganancia
+
+### V2.0 (04/01/2026) - Trailing SL + Fear & Greed
+
+- ✅ Trailing Stop Loss 1.5%
+- ✅ Integración Fear & Greed Index
+- ✅ Temporalidades dinámicas (15m, 30m, 1h, 4h)
+- ✅ 3 posiciones simultáneas máximo
+
+---
+
+## ⚙️ Configuración Actual
 
 ```python
 # Trading
@@ -28,7 +64,7 @@ TOP_ACTIVOS = 15             # Analiza top 15 por volumen
 MAX_POSICIONES = 3           # Máximo 3 posiciones
 TRAILING_SL_PERCENT = 0.015  # 1.5% trailing
 
-# Funding Fees Protection (V2.5)
+# Funding Fees Protection (V2.5+)
 FUNDING_PROTECTION = True    # Activar protección
 MAX_DIAS_POSICION = 5        # Cerrar después de 5 días
 TP_DINAMICO_DIAS = 3         # Ajustar TP después de 3 días
@@ -52,16 +88,22 @@ TP_DINAMICO_PERCENT = 0.02   # TP reducido a 2%
 - **56-75 (Greed)**: Precaución con LONGs
 - **76-100 (Extreme Greed)**: Preferir SHORTs o WAIT
 
-## 📈 Rendimiento Histórico (04/01 - 07/01/2026)
+---
 
-| Fecha          | Balance   | Ganancia |
-| -------------- | --------- | -------- |
-| 04/01 (Inicio) | $5,293.49 | Base     |
-| 05/01          | ~$5,300   | +$7      |
-| 06/01          | $5,388.63 | +$95     |
-| 07/01          | $5,438.59 | +$145    |
+## 📦 Dependencias
 
-**Rendimiento 4 días: +$145.10 (+2.74%)**
+```txt
+python-binance==1.0.19
+google-genai              # NUEVO SDK (antes: google-generativeai)
+python-dotenv
+requests
+```
+
+> [!IMPORTANT]
+> El paquete `google-generativeai` está **DEPRECADO** desde Noviembre 2025.
+> Se migró al nuevo paquete oficial `google-genai` en V2.6.
+
+---
 
 ## 🔧 Variables de Entorno Requeridas
 
@@ -88,6 +130,9 @@ El bot envía notificaciones cuando:
 
 - Abre una nueva posición
 - Cierra una posición (ganada/perdida)
+- Cierra por tiempo máximo (5 días)
+- Cierra por funding > PNL
+- Ajusta TP dinámico
 - Inicia el bot
 
 ## 🧠 Flujo de Operación
@@ -100,14 +145,46 @@ El bot envía notificaciones cuando:
 5. Ordenar por confianza
 6. Ejecutar las TOP 3 mejores
 7. Monitorear Trailing SL cada 30 segundos
-8. Repetir cada 2 minutos
+8. Verificar protección Funding Fees
+9. Repetir cada 2 minutos
 ```
 
-## 📝 Notas de Desarrollo
+---
 
-- **04/01/2026**: Upgrade a V2.0 con Trailing SL, Fear & Greed, y temporalidades dinámicas
-- Se eliminó el "Modo Lotes" que bloqueaba el bot
-- Se implementó lógica para llenar las 3 posiciones en un solo ciclo
+## 📝 Notas Técnicas
+
+### Sobre la migración del SDK (V2.6)
+
+**Antes (deprecado):**
+
+```python
+import google.generativeai as genai
+genai.configure(api_key="...")
+modelo = genai.GenerativeModel('gemini-2.0-flash')
+respuesta = modelo.generate_content(prompt).text
+```
+
+**Ahora (nuevo):**
+
+```python
+from google import genai
+client = genai.Client(api_key="...")
+response = client.models.generate_content(
+    model='gemini-2.0-flash',
+    contents=prompt
+)
+respuesta = response.text
+```
+
+### Ventajas del nuevo SDK:
+
+- ✅ Soporte activo de Google
+- ✅ Corrección de bugs constante
+- ✅ Acceso a nuevos modelos de Gemini
+- ✅ Sin warnings de deprecación
+- ✅ API más limpia y centralizada
+
+---
 
 ## ⚠️ Advertencias
 

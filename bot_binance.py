@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V2.5 - Trailing SL + Fear & Greed + Funding Fees Protection
+# V2.6 - Trailing SL + Fear & Greed + Funding Fees Protection + New GenAI SDK
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -9,7 +9,7 @@ from binance.enums import *
 import time, os, http.server, socketserver, threading, requests, json, sys
 from datetime import datetime
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
 
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
@@ -68,7 +68,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V2.5 ALIVE - FUNDING PROTECTION ACTIVE")
+            self.wfile.write(b"BINANCE BOT V2.6 ALIVE - NEW GENAI SDK + FUNDING PROTECTION")
         def log_message(self, format, *args):
             pass
     try:
@@ -696,9 +696,9 @@ def verificar_posiciones_cerradas(client):
         pass
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 + Fear & Greed)
+# MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 + Fear & Greed) - NEW SDK
 # ═══════════════════════════════════════════════════════════════════════════════
-def ejecutar_trading(client, modelo):
+def ejecutar_trading(client, gemini_client):
     log("\n" + "="*60)
     log("🧠 GEMINI 2.0 + FEAR & GREED: Iniciando ciclo de análisis...")
     log("="*60)
@@ -797,7 +797,12 @@ REGLAS ESTRICTAS:
 JSON (solo esto, sin explicación adicional):
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve"}}"""
                 
-                respuesta = modelo.generate_content(prompt).text
+                # Llamada al nuevo SDK google-genai
+                response = gemini_client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=prompt
+                )
+                respuesta = response.text
                 data = json.loads(respuesta.replace("```json","").replace("```","").strip())
                 
                 accion = data.get('ACCION', 'WAIT')
@@ -918,7 +923,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     modo = "TESTNET (PRUEBA)" if USAR_TESTNET else "PRODUCCIÓN"
     funding_status = "🟢 ACTIVA" if FUNDING_PROTECTION else "🔴 DESACTIVADA"
     
-    reporte = f"""🤖 BINANCE BOT V2.5 ONLINE
+    reporte = f"""🤖 BINANCE BOT V2.6 ONLINE
 🚀 BINANCE FUTUROS: 🟢 CONECTADO
 
 💰 BALANCE DETECTADO:
@@ -934,7 +939,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: {TOP_ACTIVOS}
 📉 Max posiciones: {MAX_POSICIONES}
 
-🆕 FUNCIONES V2.5:
+🆕 FUNCIONES V2.6:
 📍 Trailing SL: {TRAILING_SL_PERCENT*100}% activo
 ⏱️ Temporalidades: 15m, 30m, 1h, 4h
 🎭 Fear & Greed: {fg_valor} ({fg_clasificacion})
@@ -945,7 +950,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 💵 Funding vs PNL: Auto-cierre si fees > ganancias
 
 🧠 CEREBRO IA:
-🤖 Gemini 2.0 Flash: {status_gemini}
+🤖 Gemini 2.0 Flash (New SDK): {status_gemini}
 
 ⏰ HORARIO: 24/7 (Sin pausas)
 🔄 Monitoreo: cada {MONITOREO_INTERVALO}s"""
@@ -955,8 +960,8 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V2.5...")
-log("📍 Trailing SL + Fear & Greed + Funding Fees Protection")
+log("🚀 Iniciando Bot Binance Futuros V2.6...")
+log("📍 Trailing SL + Fear & Greed + Funding Protection + New GenAI SDK")
 
 # Conexión a Binance
 try:
@@ -967,15 +972,13 @@ except Exception as e:
     log(f"❌ ERROR FATAL: No se pudo conectar a Binance: {e}")
     sys.exit()
 
-# Configurar Gemini 2.0
-genai.configure(api_key=os.getenv("API_KEY_GEMINI"))
-
+# Configurar Gemini 2.0 - NUEVO SDK google-genai
 status_gemini = "🔴 ERROR"
-modelo = None
+gemini_client = None
 try:
-    modelo = genai.GenerativeModel('gemini-2.0-flash')
+    gemini_client = genai.Client(api_key=os.getenv("API_KEY_GEMINI"))
     status_gemini = "🟢 CONECTADO"
-    log("🧠 Cargando Motor: Gemini 2.0 Flash... ✅")
+    log("🧠 Cargando Motor: Gemini 2.0 Flash (New SDK)... ✅")
 except Exception as e:
     log(f"⚠️ Error cargando Gemini 2.0: {e}")
     sys.exit()
@@ -997,7 +1000,7 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V2.5 iniciado. Operando 24/7 con Trailing SL + Funding Protection...")
+log("✅ Bot V2.6 iniciado. Operando 24/7 con Trailing SL + Funding Protection + New GenAI SDK...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO
@@ -1021,7 +1024,7 @@ while True:
         
         # Cada N ciclos, hacer análisis completo de mercado
         if ciclo_analisis >= CICLOS_PARA_ANALISIS:
-            ejecutar_trading(client, modelo)
+            ejecutar_trading(client, gemini_client)
             ciclo_analisis = 0
         else:
             pos_abiertas = contar_posiciones_abiertas(client)
