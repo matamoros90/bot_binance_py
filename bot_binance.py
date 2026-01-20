@@ -1,7 +1,6 @@
-# ═══════════════════════════════════════════════════════════════════════════════
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V2.7 - Guardian System + Trailing SL + Fear & Greed + Funding Protection
+# V2.8 - Daily Summary + Resource Optimization + Guardian System
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -31,7 +30,21 @@ MAX_POSICIONES = 3        # Máximo 3 posiciones simultáneas
 # TRAILING STOP LOSS CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
 TRAILING_SL_PERCENT = 0.015  # 1.5% - distancia del trailing
-MONITOREO_INTERVALO = 30     # Segundos entre monitoreo de posiciones
+MONITOREO_INTERVALO = 60     # 60s (antes 30s) para reducir carga de CPU
+LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ESTADÍSTICAS DIARIAS (V2.8)
+# ═══════════════════════════════════════════════════════════════════════════════
+stats_diarias = {
+    "balance_inicial": 0,
+    "ganados": 0,
+    "perdidos": 0,
+    "monto_ganado": 0,
+    "monto_perdido": 0,
+    "cierres_guardian": 0,
+    "last_summary_date": None
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROTECCIÓN CONTRA FUNDING FEES (V2.5)
@@ -75,7 +88,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V2.7 ALIVE - GUARDIAN SYSTEM + FUNDING PROTECTION")
+            self.wfile.write(b"BINANCE BOT V2.8 ALIVE - DAILY SUMMARY + OPTIMIZATION")
         def log_message(self, format, *args):
             pass
     try:
@@ -428,8 +441,11 @@ def guardian_posiciones(client):
                     
                     log(f"✅ Posición {symbol} cerrada por Guardián. PNL: ${unrealized_pnl:.2f}")
                     
-                    # Notificación Telegram
-                    enviar_telegram(f"""⛔ *CIERRE EMERGENCIA GUARDIÁN V2.7*
+                    # V2.8: Acumular estadística
+                    stats_diarias["cierres_guardian"] += 1
+                    
+                    # Notificación Telegram (GUARDIÁN SIEMPRE NOTIFICA)
+                    enviar_telegram(f"""⛔ *CIERRE EMERGENCIA GUARDIÁN V2.8*
 
 *Par:* `{symbol}`
 *Pérdida:* `{pnl_porcentaje*100:.2f}%`
@@ -444,8 +460,8 @@ def guardian_posiciones(client):
                     log(f"❌ Error cerrando posición de emergencia {symbol}: {e}")
                     enviar_telegram(f"❌ ERROR Guardián: No pudo cerrar {symbol}. Error: {e}")
             
-            # Log de monitoreo (solo si LOG_DETALLADO está activo)
-            elif LOG_DETALLADO and abs(pnl_porcentaje) > 0.05:  # Solo log si > 5%
+            # Log de monitoreo (V2.8: Solo si PNL es significativo > 5%)
+            elif LOG_DETALLADO and abs(pnl_porcentaje) > 0.05:
                 estado = "🟢" if pnl_porcentaje > 0 else "🔴"
                 log(f"{estado} Guardián monitoreando {symbol}: {pnl_porcentaje*100:.2f}% (PNL: ${unrealized_pnl:.2f})")
                 
@@ -787,17 +803,15 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
 posiciones_notificadas = set()
 
 def verificar_posiciones_cerradas(client):
-    """Verifica posiciones cerradas recientemente y notifica el resultado"""
-    global posiciones_notificadas
+    """Verifica posiciones cerradas recientemente y acumula estadísticas (V2.8)"""
+    global posiciones_notificadas, stats_diarias
     try:
         trades = client.futures_account_trades(limit=20)
         
         for trade in trades:
             order_id = trade.get('orderId', '')
             symbol = trade.get('symbol', '')
-            side = trade.get('side', '')
             pnl = float(trade.get('realizedPnl', 0))
-            qty = trade.get('qty', '')
             
             if pnl == 0:
                 continue
@@ -811,25 +825,67 @@ def verificar_posiciones_cerradas(client):
             if len(posiciones_notificadas) > 100:
                 posiciones_notificadas = set(list(posiciones_notificadas)[-50:])
             
+            # Acumular estadísticas diarias
             if pnl > 0:
-                emoji = "💰"
-                estado = "GANADA"
+                stats_diarias["ganados"] += 1
+                stats_diarias["monto_ganado"] += pnl
+                log(f"💰 Posición ganada ({symbol}): +${pnl:.2f}")
             else:
-                emoji = "💸"
-                estado = "PERDIDA"
+                stats_diarias["perdidos"] += 1
+                stats_diarias["monto_perdido"] += abs(pnl)
+                log(f"💸 Posición perdida ({symbol}): -${abs(pnl):.2f}")
             
-            log(f"{emoji} Posición cerrada ({symbol}): {estado} ${abs(pnl):.2f}")
-            
-            mensaje = f"""{emoji} *{estado}* BINANCE
-*Par:* `{symbol}`
-*Lado:* `{side}`
-*Cantidad:* `{qty}`
-*P&L:* `${pnl:.2f}`
-*Trailing SL:* Activo ✅"""
-            enviar_telegram(mensaje)
+            # V2.8: YA NO ENVÍA TELEGRAM INDIVIDUAL
+            # El resumen diario se enviará al final del día
             
     except Exception as e:
-        pass
+        if LOG_DETALLADO:
+            log(f"⚠️ Error verificando posiciones cerradas: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENVIAR RESUMEN DIARIO (V2.8)
+# ═══════════════════════════════════════════════════════════════════════════════
+def enviar_resumen_diario(client):
+    """Genera y envía un resumen de las últimas 24h"""
+    global stats_diarias
+    try:
+        hoy = datetime.now().strftime("%d/%m/%Y")
+        
+        # Obtener balance actual
+        balance_actual = obtener_balance(client)
+        
+        # Calcular resultado neto
+        resultado_neto = stats_diarias["monto_ganado"] - stats_diarias["monto_perdido"]
+        emoji_resultado = "💹" if resultado_neto >= 0 else "📉"
+        
+        # Construir mensaje
+        mensaje = f"""📊 *RESUMEN DIARIO BINANCE* ({hoy})
+
+💰 *Capital Inicial:* `${stats_diarias['balance_inicial']:.2f}`
+💵 *Capital Final:* `${balance_actual:.2f}`
+
+📈 *Ganados:* `{stats_diarias['ganados']}` (+${stats_diarias['monto_ganado']:.2f})
+📉 *Perdidos:* `{stats_diarias['perdidos']}` (-${stats_diarias['monto_perdido']:.2f})
+🛡️ *Cierres Guardian:* `{stats_diarias['cierres_guardian']}`
+
+{emoji_resultado} *Resultado:* `${resultado_neto:.2f}`
+
+📍 *Estado:* `%SAME%` V2.8 activa ✅"""
+        
+        enviar_telegram(mensaje)
+        log(f"📊 Resumen diario enviado: {hoy}")
+        
+        # Resetear estadísticas para el nuevo día
+        stats_diarias["balance_inicial"] = balance_actual
+        stats_diarias["ganados"] = 0
+        stats_diarias["perdidos"] = 0
+        stats_diarias["monto_ganado"] = 0
+        stats_diarias["monto_perdido"] = 0
+        stats_diarias["cierres_guardian"] = 0
+        stats_diarias["last_summary_date"] = hoy
+        
+    except Exception as e:
+        log(f"⚠️ Error enviando resumen diario: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 + Fear & Greed) - NEW SDK
@@ -1056,48 +1112,46 @@ JSON (solo esto, sin explicación adicional):
 # REPORTE DE INICIO
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
-    modo = "TESTNET (PRUEBA)" if USAR_TESTNET else "PRODUCCIÓN"
-    funding_status = "🟢 ACTIVA" if FUNDING_PROTECTION else "🔴 DESACTIVADA"
-    
-    reporte = f"""🤖 BINANCE BOT V2.6 ONLINE
-🚀 BINANCE FUTUROS: 🟢 CONECTADO
+    """Genera un reporte detallado del estado inicial del bot"""
+    reporte = f"""🤖 *BINANCE BOT V2.8 ONLINE*
+🚀 BINANCE FUTUROS: `{status_gemini}`
 
-💰 BALANCE DETECTADO:
-💵 USDT Disponible: ${saldo:.2f}
+💰 *BALANCE DETECTADO:*
+💵 USDT Disponible: `${saldo:.2f}`
 🛡️ Escudo 80/20 %
 👨🏻‍💻 Trabajo 80%
 🛟 Seguro 20%
 
-⚙️ CONFIGURACIÓN:
-🔧 Modo: {modo}
-📊 Apalancamiento: x{APALANCAMIENTO}
-🎯 Confianza mínima: {int(CONFIANZA_MINIMA*100)}%
-📈 Top activos: {TOP_ACTIVOS}
-📉 Max posiciones: {MAX_POSICIONES}
+⚙️ *CONFIGURACIÓN:*
+🔧 Modo: `{'TESTNET' if USAR_TESTNET else 'PRODUCCIÓN'}`
+📊 Apalancamiento: `x{APALANCAMIENTO}`
+🎯 Confianza mínima: `{int(CONFIANZA_MINIMA*100)}%`
+📈 Top activos: `{TOP_ACTIVOS}`
+📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 FUNCIONES V2.6:
-📍 Trailing SL: {TRAILING_SL_PERCENT*100}% activo
-⏱️ Temporalidades: 15m, 30m, 1h, 4h
-🎭 Fear & Greed: {fg_valor} ({fg_clasificacion})
+🆕 *FUNCIONES V2.8:*
+📊 **RESUMEN DIARIO:** Activado ✅
+📍 Trailing SL: `1.5% activo` ✅
+⏱️ Temporalidades: `15m, 30m, 1h, 4h`
+🎭 Fear & Greed: `{fg_valor} ({fg_clasificacion})`
 
-💸 PROTECCIÓN FUNDING FEES: {funding_status}
-⏰ Cierre por tiempo: {MAX_DIAS_POSICION} días máx
-📈 TP dinámico: Después de {TP_DINAMICO_DIAS} días
-💵 Funding vs PNL: Auto-cierre si fees > ganancias
+💸 *PROTECCIÓN FUNDING FEES:* 🟢 ACTIVA
+⏰ Cierre por tiempo: `5 días máx`
+📈 TP dinámico: `Después de 3 días`
+💵 Funding vs PNL: `Auto-cierre si fees > ganancias`
 
-🧠 CEREBRO IA:
-🤖 Gemini 2.0 Flash (New SDK): {status_gemini}
+🧠 *CEREBRO IA:*
+🤖 Gemini 2.0 Flash (New SDK): `{status_gemini}`
 
 ⏰ HORARIO: 24/7 (Sin pausas)
-🔄 Monitoreo: cada {MONITOREO_INTERVALO}s"""
-    
+🔄 Monitoreo: `cada {MONITOREO_INTERVALO}s`"""
     return reporte
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V2.6...")
-log("📍 Trailing SL + Fear & Greed + Funding Protection + New GenAI SDK")
+log("🚀 Iniciando Bot Binance Futuros V2.8...")
+log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
 try:
@@ -1128,6 +1182,10 @@ reporte = generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacio
 log(reporte)
 enviar_telegram(reporte)
 
+# Inicializar estadísticas diarias (V2.8)
+stats_diarias["balance_inicial"] = saldo
+stats_diarias["last_summary_date"] = datetime.now().strftime("%d/%m/%Y")
+
 # Inicializar tracking de posiciones existentes
 pos_iniciales = contar_posiciones_abiertas(client)
 if pos_iniciales > 0:
@@ -1138,7 +1196,7 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V2.7 iniciado. Guardian System + Trailing SL + Funding Protection activos...")
+log("✅ Bot V2.8 iniciado. Guardian System + Resumen Diario + Optimization activos...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN
@@ -1151,17 +1209,22 @@ while True:
         ciclo_analisis += 1
         
         # ═══════════════════════════════════════════════════════════════════════
-        # GUARDIAN PRIMERO - Protección de emergencia antes de todo
+        # GUARDIAN PRIMERO (Monitoreo cada 1 min - V2.8)
         # ═══════════════════════════════════════════════════════════════════════
         if GUARDIAN_ACTIVO:
             guardian_posiciones(client)
             verificar_ordenes_sl_existen(client)
         
-        # Actualizar Trailing SL de ganancias
+        # Actualizar Trailing SL y Estadísticas
         actualizar_trailing_sl(client)
         verificar_posiciones_cerradas(client)
         
-        # Protección contra Funding Fees (cada ciclo)
+        # Verificación de Resumen Diario (a las 00:00 UTC o cambio de día)
+        hoy = datetime.now().strftime("%d/%m/%Y")
+        if hoy != stats_diarias["last_summary_date"]:
+            enviar_resumen_diario(client)
+        
+        # Protección contra Funding Fees
         if FUNDING_PROTECTION:
             verificar_tiempo_posiciones(client)
             verificar_funding_vs_pnl(client)
@@ -1172,11 +1235,11 @@ while True:
             ejecutar_trading(client, gemini_client)
             ciclo_analisis = 0
         else:
-            pos_abiertas = contar_posiciones_abiertas(client)
-            if pos_abiertas > 0:
-                log(f"👁️ Monitoreo V2.7... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
-            else:
-                log(f"👁️ Sin posiciones. Próximo análisis en {(CICLOS_PARA_ANALISIS - ciclo_analisis) * MONITOREO_INTERVALO}s...")
+            # V2.8: Log de monitoreo cada 5 min para salvar recursos
+            mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
+            if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
+                pos_abiertas = contar_posiciones_abiertas(client)
+                log(f"👁️ Monitoreo V2.8... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
         
         time.sleep(MONITOREO_INTERVALO)
         

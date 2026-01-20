@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V2.7 - Guardian System + Trading con IA
+# 🤖 Bot Binance Futures V2.8 - Resumen Diario + Optimización + IA
 
 ## 📋 Descripción
 
@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V2.7                                   |
+| **Versión**    | V2.8                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -29,6 +29,13 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V2.8 (19/01/2026) - Resumen Diario + Optimización
+
+- ✅ **Resumen Diario**: 1 solo mensaje al día con PNL neto y estadísticas.
+- ✅ **Optimización CPU**: Intervalos de monitoreo a 60s (ahorro 50% recursos).
+- ✅ **Logs Silenciosos**: Reducción drástica de logs en consola y Telegram.
+- ✅ **Estadísticas**: Tracking intradía de trades ganados/perdidos.
 
 ### V2.7 (19/01/2026) - Guardian System
 
@@ -71,6 +78,7 @@ APALANCAMIENTO = 3           # x3 conservador
 TOP_ACTIVOS = 15             # Analiza top 15 por volumen
 MAX_POSICIONES = 3           # Máximo 3 posiciones
 TRAILING_SL_PERCENT = 0.015  # 1.5% trailing
+MONITOREO_INTERVALO = 60     # 60 segundos (Optimizado V2.8)
 
 # Guardian System V2.7
 GUARDIAN_ACTIVO = True       # Protección de emergencia
