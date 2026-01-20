@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V2.6 - Trailing SL + Fear & Greed + Funding Fees Protection + New GenAI SDK
+# V2.7 - Guardian System + Trailing SL + Fear & Greed + Funding Protection
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -42,6 +42,13 @@ TP_DINAMICO_DIAS = 3            # Después de 3 días, ajustar TP
 TP_DINAMICO_PERCENT = 0.02      # TP reducido a 2% después de X días
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SISTEMA GUARDIÁN V2.7 - PROTECCIÓN ABSOLUTA
+# ═══════════════════════════════════════════════════════════════════════════════
+GUARDIAN_ACTIVO = True          # Activar sistema guardián
+MAX_PERDIDA_PERMITIDA = -0.10   # -10% cierre obligatorio de emergencia
+LOG_DETALLADO = True            # Logs completos, sin errores silenciosos
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
 # ═══════════════════════════════════════════════════════════════════════════════
 TEMPORALIDADES = ['15m', '30m', '1h', '4h']
@@ -68,7 +75,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V2.6 ALIVE - NEW GENAI SDK + FUNDING PROTECTION")
+            self.wfile.write(b"BINANCE BOT V2.7 ALIVE - GUARDIAN SYSTEM + FUNDING PROTECTION")
         def log_message(self, format, *args):
             pass
     try:
@@ -274,8 +281,9 @@ def cancelar_ordenes_sl(client, symbol):
         for orden in ordenes:
             if orden['type'] in ['STOP_MARKET', 'TAKE_PROFIT_MARKET']:
                 client.futures_cancel_order(symbol=symbol, orderId=orden['orderId'])
-    except:
-        pass
+    except Exception as e:
+        if LOG_DETALLADO:
+            log(f"⚠️ Error cancelando órdenes SL de {symbol}: {e}")
 
 def crear_orden_sl(client, symbol, side, precio, cantidad):
     """Crea una nueva orden Stop Loss"""
@@ -360,6 +368,134 @@ def actualizar_trailing_sl(client):
                         
     except Exception as e:
         log(f"⚠️ Error en trailing SL: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SISTEMA GUARDIÁN V2.7 - MONITOREO COMPLETO DE POSICIONES
+# ═══════════════════════════════════════════════════════════════════════════════
+def guardian_posiciones(client):
+    """
+    Guardián de emergencia - Monitorea TODAS las posiciones independientemente.
+    Cierra automáticamente si la pérdida supera MAX_PERDIDA_PERMITIDA (-10%).
+    Esta función funciona INDEPENDIENTE de las órdenes SL en Binance.
+    """
+    if not GUARDIAN_ACTIVO:
+        return
+    
+    try:
+        positions = client.futures_position_information()
+        
+        for pos in positions:
+            symbol = pos['symbol']
+            cantidad = float(pos.get('positionAmt', 0))
+            
+            if cantidad == 0:
+                continue
+            
+            # Calcular PNL porcentual
+            entry_price = float(pos['entryPrice'])
+            mark_price = float(pos['markPrice'])
+            unrealized_pnl = float(pos.get('unRealizedProfit', 0))
+            
+            # Calcular porcentaje de ganancia/pérdida
+            if entry_price > 0:
+                if cantidad > 0:  # LONG
+                    pnl_porcentaje = (mark_price - entry_price) / entry_price
+                else:  # SHORT
+                    pnl_porcentaje = (entry_price - mark_price) / entry_price
+            else:
+                pnl_porcentaje = 0
+            
+            # ═══════════════════════════════════════════════════════════════════
+            # CIERRE DE EMERGENCIA POR PÉRDIDA MÁXIMA (-10%)
+            # ═══════════════════════════════════════════════════════════════════
+            if pnl_porcentaje <= MAX_PERDIDA_PERMITIDA:
+                side = 'SELL' if cantidad > 0 else 'BUY'
+                
+                log(f"⛔ GUARDIÁN: {symbol} en {pnl_porcentaje*100:.2f}% (límite: {MAX_PERDIDA_PERMITIDA*100}%)")
+                log(f"⛔ CERRANDO POSICIÓN DE EMERGENCIA: {symbol}")
+                
+                try:
+                    # Cancelar todas las órdenes pendientes primero
+                    client.futures_cancel_all_open_orders(symbol=symbol)
+                    
+                    # Cerrar la posición a mercado
+                    client.futures_create_order(
+                        symbol=symbol,
+                        side=side,
+                        type='MARKET',
+                        quantity=abs(cantidad)
+                    )
+                    
+                    log(f"✅ Posición {symbol} cerrada por Guardián. PNL: ${unrealized_pnl:.2f}")
+                    
+                    # Notificación Telegram
+                    enviar_telegram(f"""⛔ *CIERRE EMERGENCIA GUARDIÁN V2.7*
+
+*Par:* `{symbol}`
+*Pérdida:* `{pnl_porcentaje*100:.2f}%`
+*Límite:* `{MAX_PERDIDA_PERMITIDA*100}%`
+*Entry:* `${entry_price:.4f}`
+*Exit:* `${mark_price:.4f}`
+*PNL:* `${unrealized_pnl:.2f}`
+
+⚠️ Posición cerrada automáticamente para prevenir pérdidas mayores.""")
+                    
+                except Exception as e:
+                    log(f"❌ Error cerrando posición de emergencia {symbol}: {e}")
+                    enviar_telegram(f"❌ ERROR Guardián: No pudo cerrar {symbol}. Error: {e}")
+            
+            # Log de monitoreo (solo si LOG_DETALLADO está activo)
+            elif LOG_DETALLADO and abs(pnl_porcentaje) > 0.05:  # Solo log si > 5%
+                estado = "🟢" if pnl_porcentaje > 0 else "🔴"
+                log(f"{estado} Guardián monitoreando {symbol}: {pnl_porcentaje*100:.2f}% (PNL: ${unrealized_pnl:.2f})")
+                
+    except Exception as e:
+        log(f"⚠️ Error en Guardián: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VERIFICAR QUE EXISTAN ÓRDENES SL EN BINANCE
+# ═══════════════════════════════════════════════════════════════════════════════
+def verificar_ordenes_sl_existen(client):
+    """Verifica que cada posición tenga una orden SL activa. Si no, la crea."""
+    try:
+        positions = client.futures_position_information()
+        
+        for pos in positions:
+            symbol = pos['symbol']
+            cantidad = float(pos.get('positionAmt', 0))
+            
+            if cantidad == 0:
+                continue
+            
+            # Verificar si hay órdenes SL para este símbolo
+            try:
+                ordenes = client.futures_get_open_orders(symbol=symbol)
+                tiene_sl = any(o['type'] == 'STOP_MARKET' for o in ordenes)
+                
+                if not tiene_sl:
+                    entry_price = float(pos['entryPrice'])
+                    side = 'LONG' if cantidad > 0 else 'SHORT'
+                    
+                    # Crear SL de emergencia al -10% (mismo que MAX_PERDIDA_PERMITIDA)
+                    if side == 'LONG':
+                        sl_precio = entry_price * (1 + MAX_PERDIDA_PERMITIDA)  # -10%
+                        sl_side = 'SELL'
+                    else:
+                        sl_precio = entry_price * (1 - MAX_PERDIDA_PERMITIDA)  # +10% para SHORT
+                        sl_side = 'BUY'
+                    
+                    log(f"⚠️ {symbol} SIN orden SL. Creando SL de emergencia a ${sl_precio:.4f}")
+                    
+                    if crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad)):
+                        log(f"✅ SL de emergencia creado para {symbol}")
+                        enviar_telegram(f"⚠️ *SL FALTANTE DETECTADO*\n*Par:* `{symbol}`\n*SL creado a:* `${sl_precio:.4f}` (10%)")
+                    
+            except Exception as e:
+                if LOG_DETALLADO:
+                    log(f"⚠️ Error verificando SL de {symbol}: {e}")
+                    
+    except Exception as e:
+        log(f"⚠️ Error en verificar_ordenes_sl_existen: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROTECCIÓN FUNDING FEES - CIERRE POR TIEMPO MÁXIMO
@@ -995,15 +1131,17 @@ enviar_telegram(reporte)
 # Inicializar tracking de posiciones existentes
 pos_iniciales = contar_posiciones_abiertas(client)
 if pos_iniciales > 0:
-    log(f"� {pos_iniciales} posiciones existentes detectadas. Activando Trailing SL...")
+    log(f"🛡️ {pos_iniciales} posiciones existentes detectadas. Activando Guardian + Trailing SL...")
+    guardian_posiciones(client)  # Primero verificar emergencias
+    verificar_ordenes_sl_existen(client)  # Verificar que tengan SL
     actualizar_trailing_sl(client)
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V2.6 iniciado. Operando 24/7 con Trailing SL + Funding Protection + New GenAI SDK...")
+log("✅ Bot V2.7 iniciado. Guardian System + Trailing SL + Funding Protection activos...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO
+# BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN
 # ═══════════════════════════════════════════════════════════════════════════════
 ciclo_analisis = 0
 CICLOS_PARA_ANALISIS = 4  # Cada 4 ciclos de monitoreo (4 * 30s = 2 min) hacer análisis completo
@@ -1012,7 +1150,14 @@ while True:
     try:
         ciclo_analisis += 1
         
-        # Siempre actualizar Trailing SL
+        # ═══════════════════════════════════════════════════════════════════════
+        # GUARDIAN PRIMERO - Protección de emergencia antes de todo
+        # ═══════════════════════════════════════════════════════════════════════
+        if GUARDIAN_ACTIVO:
+            guardian_posiciones(client)
+            verificar_ordenes_sl_existen(client)
+        
+        # Actualizar Trailing SL de ganancias
         actualizar_trailing_sl(client)
         verificar_posiciones_cerradas(client)
         
@@ -1029,7 +1174,7 @@ while True:
         else:
             pos_abiertas = contar_posiciones_abiertas(client)
             if pos_abiertas > 0:
-                log(f"👁️ Monitoreo V2.5... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V2.7... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
             else:
                 log(f"👁️ Sin posiciones. Próximo análisis en {(CICLOS_PARA_ANALISIS - ciclo_analisis) * MONITOREO_INTERVALO}s...")
         

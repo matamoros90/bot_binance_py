@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V2.6 - Trading con IA + New GenAI SDK
+# 🤖 Bot Binance Futures V2.7 - Guardian System + Trading con IA
 
 ## 📋 Descripción
 
@@ -6,11 +6,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 18/01/2026)
+## 🚀 Estado del Proyecto (Última actualización: 19/01/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V2.6                                   |
+| **Versión**    | V2.7                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -29,6 +29,14 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V2.7 (19/01/2026) - Guardian System
+
+- ✅ **Sistema Guardián**: Monitorea TODAS las posiciones (ganancia y pérdida)
+- ✅ **Cierre de emergencia**: Cierra automáticamente si pérdida > 10%
+- ✅ **Verificación SL**: Detecta y crea órdenes SL faltantes
+- ✅ **Logs mejorados**: Eliminados errores silenciosos (`except: pass`)
+- 🎯 **Objetivo**: Evitar pérdidas extremas como TOKENUSDT (-75%)
 
 ### V2.6 (18/01/2026) - New GenAI SDK
 
@@ -63,6 +71,10 @@ APALANCAMIENTO = 3           # x3 conservador
 TOP_ACTIVOS = 15             # Analiza top 15 por volumen
 MAX_POSICIONES = 3           # Máximo 3 posiciones
 TRAILING_SL_PERCENT = 0.015  # 1.5% trailing
+
+# Guardian System V2.7
+GUARDIAN_ACTIVO = True       # Protección de emergencia
+MAX_PERDIDA_PERMITIDA = -0.10  # -10% cierre obligatorio
 
 # Funding Fees Protection (V2.5+)
 FUNDING_PROTECTION = True    # Activar protección
