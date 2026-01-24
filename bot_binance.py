@@ -34,16 +34,25 @@ MONITOREO_INTERVALO = 60     # 60s (antes 30s) para reducir carga de CPU
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ESTADÍSTICAS DIARIAS (V2.8)
+# ESTADÍSTICAS SEMANALES (V3.0) - Resumen cada viernes a las 18:00
 # ═══════════════════════════════════════════════════════════════════════════════
-stats_diarias = {
-    "balance_inicial": 0,
-    "ganados": 0,
-    "perdidos": 0,
-    "monto_ganado": 0,
-    "monto_perdido": 0,
-    "cierres_guardian": 0,
-    "last_summary_date": None
+# Balance inicial del proyecto (04/01/2026) - usado para calcular ROI total
+BALANCE_INICIAL_PROYECTO = 5293.49
+
+# Diccionario para almacenar estadísticas semanales
+# - balance_inicio_semana: balance al inicio de la semana actual
+# - ganados/perdidos: contadores de trades positivos/negativos
+# - monto_ganado/monto_perdido: suma de ganancias/pérdidas en USD
+# - cierres_guardian: trades cerrados por el sistema guardián de emergencia
+# - ultimo_resumen: fecha/hora del último resumen enviado para evitar duplicados
+stats_semanales = {
+    "balance_inicio_semana": 0,      # Balance al iniciar la semana
+    "ganados": 0,                    # Contador de trades ganados
+    "perdidos": 0,                   # Contador de trades perdidos
+    "monto_ganado": 0,               # Total USD ganado esta semana
+    "monto_perdido": 0,              # Total USD perdido esta semana
+    "cierres_guardian": 0,           # Trades cerrados por guardian de emergencia
+    "ultimo_resumen": None           # Timestamp del último resumen enviado
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -441,24 +450,16 @@ def guardian_posiciones(client):
                     
                     log(f"✅ Posición {symbol} cerrada por Guardián. PNL: ${unrealized_pnl:.2f}")
                     
-                    # V2.8: Acumular estadística
-                    stats_diarias["cierres_guardian"] += 1
+                    # V3.0: Acumular estadística en stats_semanales para el resumen semanal
+                    stats_semanales["cierres_guardian"] += 1
                     
-                    # Notificación Telegram (GUARDIÁN SIEMPRE NOTIFICA)
-                    enviar_telegram(f"""⛔ *CIERRE EMERGENCIA GUARDIÁN V2.8*
-
-*Par:* `{symbol}`
-*Pérdida:* `{pnl_porcentaje*100:.2f}%`
-*Límite:* `{MAX_PERDIDA_PERMITIDA*100}%`
-*Entry:* `${entry_price:.4f}`
-*Exit:* `${mark_price:.4f}`
-*PNL:* `${unrealized_pnl:.2f}`
-
-⚠️ Posición cerrada automáticamente para prevenir pérdidas mayores.""")
+                    # V3.0: Ya NO se envía Telegram individual
+                    # El cierre se incluirá en el resumen semanal del viernes
+                    # (Antes enviaba notificación aquí, ahora solo log)
                     
                 except Exception as e:
                     log(f"❌ Error cerrando posición de emergencia {symbol}: {e}")
-                    enviar_telegram(f"❌ ERROR Guardián: No pudo cerrar {symbol}. Error: {e}")
+                    # V3.0: Ya no se envía Telegram de error individual
             
             # Log de monitoreo (V2.8: Solo si PNL es significativo > 5%)
             elif LOG_DETALLADO and abs(pnl_porcentaje) > 0.05:
@@ -504,7 +505,8 @@ def verificar_ordenes_sl_existen(client):
                     
                     if crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad)):
                         log(f"✅ SL de emergencia creado para {symbol}")
-                        enviar_telegram(f"⚠️ *SL FALTANTE DETECTADO*\n*Par:* `{symbol}`\n*SL creado a:* `${sl_precio:.4f}` (10%)")
+                        # V3.0: Ya no se envía Telegram individual
+                        # enviar_telegram(f"⚠️ *SL FALTANTE DETECTADO*\n*Par:* `{symbol}`\n*SL creado a:* `${sl_precio:.4f}` (10%)")
                     
             except Exception as e:
                 if LOG_DETALLADO:
@@ -566,13 +568,9 @@ def verificar_tiempo_posiciones(client):
                         quantity=abs(cantidad)
                     )
                     
-                    enviar_telegram(f"""⏰ *CIERRE POR TIEMPO* BINANCE
-*Par:* `{symbol}`
-*Días abierto:* `{dias_abierto}` (máx: {MAX_DIAS_POSICION})
-*Entry:* `${entry_price:.4f}`
-*Exit:* `${mark_price:.4f}`
-*PNL estimado:* `${pnl:.2f}`
-*Razón:* Protección funding fees V2.5""")
+                    # V3.0: Ya no se envía Telegram individual (se incluye en resumen semanal)
+                    # enviar_telegram(f"""... cierre por tiempo ...""")
+                    log(f"✅ Posición {symbol} cerrada por tiempo ({dias_abierto} días). PNL: ${pnl:.2f}")
                     
             except Exception as e:
                 log(f"⚠️ Error verificando tiempo de {symbol}: {e}")
@@ -624,13 +622,9 @@ def verificar_funding_vs_pnl(client):
                         quantity=abs(cantidad)
                     )
                     
-                    enviar_telegram(f"""💸 *CIERRE FUNDING > PNL* BINANCE
-*Par:* `{symbol}`
-*Unrealized PNL:* `${unrealized_pnl:.2f}`
-*Funding pagado:* `${total_funding:.2f}`
-*Entry:* `${entry_price:.4f}`
-*Exit:* `${mark_price:.4f}`
-*Razón:* Fees superan ganancias V2.5""")
+                    # V3.0: Ya no se envía Telegram individual
+                    # enviar_telegram(f"""... cierre funding > PNL ...""")
+                    log(f"✅ Posición {symbol} cerrada (funding > PNL). PNL: ${unrealized_pnl:.2f}")
                     
             except Exception as e:
                 # API puede no soportar income_history en testnet
@@ -722,12 +716,8 @@ def ajustar_tp_dinamico(client):
                         )
                         
                         log(f"📈 TP Dinámico ajustado ({symbol}): ${nuevo_tp:.4f} (días: {dias_abierto})")
-                        enviar_telegram(f"""📈 *TP DINÁMICO AJUSTADO*
-*Par:* `{symbol}`
-*Días abierto:* `{dias_abierto}`
-*Nuevo TP:* `${nuevo_tp:.4f}`
-*PNL actual:* `${unrealized_pnl:.2f}`
-*Razón:* Asegurar ganancias V2.5""")
+                        # V3.0: Ya no se envía Telegram individual
+                        # enviar_telegram(f"""... TP dinámico ajustado ...""")
                         
                     except Exception as e:
                         log(f"⚠️ Error creando TP dinámico: {e}")
@@ -803,9 +793,20 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
 posiciones_notificadas = set()
 
 def verificar_posiciones_cerradas(client):
-    """Verifica posiciones cerradas recientemente y acumula estadísticas (V2.8)"""
-    global posiciones_notificadas, stats_diarias
+    """
+    Verifica trades recientes y acumula estadísticas semanales (V3.0).
+    
+    Esta función:
+    1. Obtiene los últimos 20 trades de la cuenta
+    2. Filtra los que tienen PNL realizado (posiciones cerradas)
+    3. Acumula ganancias/pérdidas en stats_semanales
+    4. No envía notificaciones individuales (solo log)
+    
+    Las estadísticas se incluirán en el resumen semanal del viernes.
+    """
+    global posiciones_notificadas, stats_semanales
     try:
+        # Obtener los últimos 20 trades de futuros
         trades = client.futures_account_trades(limit=20)
         
         for trade in trades:
@@ -813,79 +814,157 @@ def verificar_posiciones_cerradas(client):
             symbol = trade.get('symbol', '')
             pnl = float(trade.get('realizedPnl', 0))
             
+            # Ignorar trades sin PNL realizado (posiciones aún abiertas)
             if pnl == 0:
                 continue
             
+            # Crear clave única para evitar contar el mismo trade dos veces
             unique_key = f"{order_id}_{symbol}_{pnl}"
             if unique_key in posiciones_notificadas:
                 continue
             
+            # Marcar como procesado
             posiciones_notificadas.add(unique_key)
             
+            # Limpiar set si crece demasiado (evitar memory leak)
             if len(posiciones_notificadas) > 100:
                 posiciones_notificadas = set(list(posiciones_notificadas)[-50:])
             
-            # Acumular estadísticas diarias
+            # ═══════════════════════════════════════════════════════════════
+            # ACUMULAR ESTADÍSTICAS SEMANALES (V3.0)
+            # ═══════════════════════════════════════════════════════════════
             if pnl > 0:
-                stats_diarias["ganados"] += 1
-                stats_diarias["monto_ganado"] += pnl
+                # Trade ganador: incrementar contador y sumar ganancia
+                stats_semanales["ganados"] += 1
+                stats_semanales["monto_ganado"] += pnl
                 log(f"💰 Posición ganada ({symbol}): +${pnl:.2f}")
             else:
-                stats_diarias["perdidos"] += 1
-                stats_diarias["monto_perdido"] += abs(pnl)
+                # Trade perdedor: incrementar contador y sumar pérdida
+                stats_semanales["perdidos"] += 1
+                stats_semanales["monto_perdido"] += abs(pnl)
                 log(f"💸 Posición perdida ({symbol}): -${abs(pnl):.2f}")
             
-            # V2.8: YA NO ENVÍA TELEGRAM INDIVIDUAL
-            # El resumen diario se enviará al final del día
+            # V3.0: NO SE ENVÍA TELEGRAM INDIVIDUAL
+            # Todas las estadísticas se incluyen en el resumen semanal del viernes
             
     except Exception as e:
         if LOG_DETALLADO:
             log(f"⚠️ Error verificando posiciones cerradas: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ENVIAR RESUMEN DIARIO (V2.8)
+# ENVIAR RESUMEN SEMANAL (V3.0) - Solo viernes a las 18:00
 # ═══════════════════════════════════════════════════════════════════════════════
-def enviar_resumen_diario(client):
-    """Genera y envía un resumen de las últimas 24h"""
-    global stats_diarias
+def es_viernes_18h():
+    """
+    Verifica si es viernes a las 18:00 (hora local).
+    
+    Retorna:
+        bool: True si es viernes y la hora está entre 18:00 y 18:59
+    
+    Ejemplo de uso:
+        if es_viernes_18h():
+            enviar_resumen_semanal(client)
+    """
+    ahora = datetime.now()
+    # weekday() retorna: 0=Lunes, 1=Martes, ..., 4=Viernes, 5=Sábado, 6=Domingo
+    es_viernes = ahora.weekday() == 4  # 4 = Viernes
+    es_hora_18 = ahora.hour == 18      # Hora 18 (6 PM)
+    return es_viernes and es_hora_18
+
+def enviar_resumen_semanal(client):
+    """
+    Genera y envía un resumen semanal por Telegram.
+    
+    Este resumen incluye:
+    - Balance inicial del proyecto (04/01/2026): $5,293.49
+    - Balance actual de la cuenta
+    - Diferencia en USD desde el inicio del proyecto
+    - ROI total del proyecto (%)
+    - Estadísticas de la semana (trades ganados/perdidos)
+    - ROI de la semana actual
+    
+    El resumen se envía cada viernes a las 18:00 y las estadísticas
+    semanales se reinician para la nueva semana.
+    """
+    global stats_semanales
     try:
-        hoy = datetime.now().strftime("%d/%m/%Y")
+        # Obtener fecha actual formateada
+        fecha_actual = datetime.now().strftime("%d/%m/%Y")
         
-        # Obtener balance actual
+        # Obtener balance actual de Binance
         balance_actual = obtener_balance(client)
         
-        # Calcular resultado neto
-        resultado_neto = stats_diarias["monto_ganado"] - stats_diarias["monto_perdido"]
-        emoji_resultado = "💹" if resultado_neto >= 0 else "📉"
+        # ═══════════════════════════════════════════════════════════════════
+        # CÁLCULO DE ROI TOTAL DEL PROYECTO
+        # ═══════════════════════════════════════════════════════════════════
+        # Ganancia total = Balance actual - Balance inicial del proyecto
+        ganancia_total = balance_actual - BALANCE_INICIAL_PROYECTO
         
-        # Construir mensaje
-        mensaje = f"""📊 *RESUMEN DIARIO BINANCE* ({hoy})
-
-💰 *Capital Inicial:* `${stats_diarias['balance_inicial']:.2f}`
-💵 *Capital Final:* `${balance_actual:.2f}`
-
-📈 *Ganados:* `{stats_diarias['ganados']}` (+${stats_diarias['monto_ganado']:.2f})
-📉 *Perdidos:* `{stats_diarias['perdidos']}` (-${stats_diarias['monto_perdido']:.2f})
-🛡️ *Cierres Guardian:* `{stats_diarias['cierres_guardian']}`
-
-{emoji_resultado} *Resultado:* `${resultado_neto:.2f}`
-
-📍 *Estado:* `%SAME%` V2.8 activa ✅"""
+        # ROI Total = (Ganancia / Balance Inicial) * 100
+        # Ejemplo: ($6,307 - $5,293) / $5,293 * 100 = 19.15%
+        roi_total = (ganancia_total / BALANCE_INICIAL_PROYECTO) * 100
         
+        # ═══════════════════════════════════════════════════════════════════
+        # CÁLCULO DE ESTADÍSTICAS SEMANALES
+        # ═══════════════════════════════════════════════════════════════════
+        # Resultado neto de la semana = Ganancias - Pérdidas
+        resultado_semana = stats_semanales["monto_ganado"] - stats_semanales["monto_perdido"]
+        
+        # Emoji según resultado positivo o negativo
+        emoji_semana = "💹" if resultado_semana >= 0 else "📉"
+        emoji_total = "💹" if ganancia_total >= 0 else "📉"
+        
+        # Calcular ROI semanal si hay balance inicial de semana
+        if stats_semanales["balance_inicio_semana"] > 0:
+            roi_semanal = (resultado_semana / stats_semanales["balance_inicio_semana"]) * 100
+        else:
+            roi_semanal = 0
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # CONSTRUIR MENSAJE DE TELEGRAM
+        # ═══════════════════════════════════════════════════════════════════
+        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V3.0*
+📅 Fecha: {fecha_actual}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+� *RENDIMIENTO TOTAL DEL PROYECTO*
+━━━━━━━━━━━━━━━━━━━━━━━
+💰 *Balance Inicial (04/01):* `${BALANCE_INICIAL_PROYECTO:.2f}`
+💵 *Balance Actual:* `${balance_actual:.2f}`
+{emoji_total} *Ganancia Total:* `${ganancia_total:.2f}`
+📊 *ROI Total:* `{roi_total:.2f}%`
+
+━━━━━━━━━━━━━━━━━━━━━━━
+� *ESTA SEMANA*
+━━━━━━━━━━━━━━━━━━━━━━━
+✅ *Trades Ganados:* `{stats_semanales['ganados']}`
+❌ *Trades Perdidos:* `{stats_semanales['perdidos']}`
+💰 *Ganancias:* `+${stats_semanales['monto_ganado']:.2f}`
+� *Pérdidas:* `-${stats_semanales['monto_perdido']:.2f}`
+🛡️ *Cierres Guardian:* `{stats_semanales['cierres_guardian']}`
+{emoji_semana} *Resultado Semana:* `${resultado_semana:.2f}`
+� *ROI Semanal:* `{roi_semanal:.2f}%`
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🤖 Bot Binance V3.0 Activo ✅"""
+        
+        # Enviar mensaje por Telegram
         enviar_telegram(mensaje)
-        log(f"📊 Resumen diario enviado: {hoy}")
+        log(f"📊 Resumen semanal enviado: {fecha_actual}")
         
-        # Resetear estadísticas para el nuevo día
-        stats_diarias["balance_inicial"] = balance_actual
-        stats_diarias["ganados"] = 0
-        stats_diarias["perdidos"] = 0
-        stats_diarias["monto_ganado"] = 0
-        stats_diarias["monto_perdido"] = 0
-        stats_diarias["cierres_guardian"] = 0
-        stats_diarias["last_summary_date"] = hoy
+        # ═══════════════════════════════════════════════════════════════════
+        # RESETEAR ESTADÍSTICAS PARA LA NUEVA SEMANA
+        # ═══════════════════════════════════════════════════════════════════
+        stats_semanales["balance_inicio_semana"] = balance_actual  # Guardar balance actual como inicio
+        stats_semanales["ganados"] = 0
+        stats_semanales["perdidos"] = 0
+        stats_semanales["monto_ganado"] = 0
+        stats_semanales["monto_perdido"] = 0
+        stats_semanales["cierres_guardian"] = 0
+        stats_semanales["ultimo_resumen"] = datetime.now()  # Marcar timestamp del resumen
         
     except Exception as e:
-        log(f"⚠️ Error enviando resumen diario: {e}")
+        log(f"⚠️ Error enviando resumen semanal: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 + Fear & Greed) - NEW SDK
@@ -1088,18 +1167,9 @@ JSON (solo esto, sin explicación adicional):
                 
                 if check:
                     ejecutadas += 1
-                    enviar_telegram(f"""🚀 *ORDEN BINANCE V2.0*
-*Par:* `{symbol}`
-*Acción:* `{accion}`
-*Confianza:* `{conf_pct}%`
-*Temporalidad:* `{temporalidad}`
-*Monto:* `${monto}`
-*Cantidad:* `{cantidad}`
-*TP:* `${tp:.4f}`
-*SL inicial:* `${sl:.4f}`
-*Trailing SL:* `1.5% activo` ✅
-*Fear/Greed:* `{fg_valor} ({fg_clasificacion})`
-*Razón:* _{razon[:100]}_""")
+                    # V3.0: Ya no se envía Telegram individual por cada orden
+                    # La estadística se acumula en stats_semanales y se envía el viernes
+                    log(f"   ✅ Orden ejecutada exitosamente: {symbol} {accion}")
             else:
                 log(f"   ⚠️ Cantidad mínima no alcanzada para {symbol}")
         
@@ -1177,14 +1247,20 @@ except Exception as e:
 fg_valor, fg_clasificacion = obtener_fear_greed()
 log(f"🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})")
 
-# Reporte de inicio
+# Reporte de inicio - V3.0: Solo log, no Telegram (el resumen viene el viernes)
 reporte = generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion)
 log(reporte)
-enviar_telegram(reporte)
+# V3.0: Ya no se envía Telegram al iniciar
+# enviar_telegram(reporte)  # Comentado - solo resumen semanal
+log("📩 Telegram: Resumen semanal cada viernes a las 18:00")
 
-# Inicializar estadísticas diarias (V2.8)
-stats_diarias["balance_inicial"] = saldo
-stats_diarias["last_summary_date"] = datetime.now().strftime("%d/%m/%Y")
+# ═══════════════════════════════════════════════════════════════════════════════
+# INICIALIZAR ESTADÍSTICAS SEMANALES (V3.0)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Guardar balance actual como inicio de semana para calcular ROI semanal
+stats_semanales["balance_inicio_semana"] = saldo
+# Marcar que no se ha enviado resumen aún (None = nunca enviado)
+stats_semanales["ultimo_resumen"] = None
 
 # Inicializar tracking de posiciones existentes
 pos_iniciales = contar_posiciones_abiertas(client)
@@ -1196,39 +1272,53 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V2.8 iniciado. Guardian System + Resumen Diario + Optimization activos...")
+log("✅ Bot V3.0 iniciado. Guardian System + Resumen Semanal + Weekly Summary activos...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN
+# BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN + RESUMEN SEMANAL
 # ═══════════════════════════════════════════════════════════════════════════════
+# Contador de ciclos para decidir cuándo hacer análisis completo
 ciclo_analisis = 0
-CICLOS_PARA_ANALISIS = 4  # Cada 4 ciclos de monitoreo (4 * 30s = 2 min) hacer análisis completo
+# Cada 4 ciclos de monitoreo (4 * 60s = 4 min) hacer análisis completo de mercado
+CICLOS_PARA_ANALISIS = 4
+# Variable para controlar que solo se envíe 1 resumen por viernes
+resumen_enviado_esta_hora = False
 
 while True:
     try:
         ciclo_analisis += 1
         
-        # ═══════════════════════════════════════════════════════════════════════
-        # GUARDIAN PRIMERO (Monitoreo cada 1 min - V2.8)
-        # ═══════════════════════════════════════════════════════════════════════
+        # ═════════════════════════════════════════════════════════════════════
+        # GUARDIAN SYSTEM - Monitoreo cada ciclo (protección de emergencia)
+        # Cierra posiciones automáticamente si la pérdida supera -10%
+        # ═════════════════════════════════════════════════════════════════════
         if GUARDIAN_ACTIVO:
-            guardian_posiciones(client)
-            verificar_ordenes_sl_existen(client)
+            guardian_posiciones(client)       # Verificar pérdidas excesivas
+            verificar_ordenes_sl_existen(client)  # Verificar que existan órdenes SL
         
-        # Actualizar Trailing SL y Estadísticas
-        actualizar_trailing_sl(client)
-        verificar_posiciones_cerradas(client)
+        # ═════════════════════════════════════════════════════════════════════
+        # TRAILING STOP LOSS + ESTADÍSTICAS
+        # Actualiza trailing SL y acumula stats de posiciones cerradas
+        # ═════════════════════════════════════════════════════════════════════
+        actualizar_trailing_sl(client)        # Mover SL hacia arriba si hay ganancia
+        verificar_posiciones_cerradas(client)  # Acumular stats en stats_semanales
         
-        # Verificación de Resumen Diario (a las 00:00 UTC o cambio de día)
-        hoy = datetime.now().strftime("%d/%m/%Y")
-        if hoy != stats_diarias["last_summary_date"]:
-            enviar_resumen_diario(client)
+        # ═════════════════════════════════════════════════════════════════════
+        # RESUMEN SEMANAL - Solo viernes a las 18:00 (V3.0)
+        # Envía un único mensaje por Telegram con el resumen de la semana
+        # ═════════════════════════════════════════════════════════════════════
+        if es_viernes_18h():
+            # Verificar que no hayamos enviado resumen en esta hora
+            if not resumen_enviado_esta_hora:
+                enviar_resumen_semanal(client)
+                resumen_enviado_esta_hora = True  # Marcar como enviado
+        else:
+            # Resetear la bandera cuando ya no sea viernes 18h
+            resumen_enviado_esta_hora = False
         
         # Protección contra Funding Fees
         if FUNDING_PROTECTION:
             verificar_tiempo_posiciones(client)
-            verificar_funding_vs_pnl(client)
-            ajustar_tp_dinamico(client)
         
         # Cada N ciclos, hacer análisis completo de mercado
         if ciclo_analisis >= CICLOS_PARA_ANALISIS:

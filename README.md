@@ -1,12 +1,12 @@
-# 🤖 Bot Binance Futures V2.8 - Resumen Diario + Optimización + IA
+# 🤖 Bot Binance Futures V3.0 - Resumen Semanal + Optimización + IA
 
 ## 📋 Descripción
 
-Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash** como cerebro de IA para tomar decisiones de trading. Opera 24/7 con estrategia de swing trading conservador y **protección automática contra funding fees**.
+Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash** como cerebro de IA para tomar decisiones de trading. Opera 24/7 con estrategia de swing trading conservador, **protección automática contra funding fees**, y **resumen semanal por Telegram cada viernes a las 18:00**.
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 19/01/2026)
+## 🚀 Estado del Proyecto (Última actualización: 23/01/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
@@ -17,18 +17,66 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ### 💰 Rendimiento Acumulado (TESTNET)
 
-| Período       | Balance Inicial | Balance Actual | Ganancia       | %           |
+| Período       | Balance Inicial | Balance Actual | Ganancia       | ROI         |
 | ------------- | --------------- | -------------- | -------------- | ----------- |
 | 04/01 - 07/01 | $5,293.49       | $5,438.59      | +$145.10       | +2.74%      |
-| 07/01 - 18/01 | $5,438.59       | **$6,576.60**  | +$1,138.01     | +20.92%     |
-| **TOTAL**     | $5,293.49       | **$6,576.60**  | **+$1,283.11** | **+24.24%** |
+| 07/01 - 18/01 | $5,438.59       | $6,576.60      | +$1,138.01     | +20.92%     |
+| 18/01 - 23/01 | $6,576.60       | $6,307.20      | -$269.40       | -4.10%      |
+| **TOTAL**     | $5,293.49       | **$6,307.20**  | **+$1,013.71** | **+19.15%** |
 
 > [!NOTE]
 > Estos resultados son en TESTNET. El rendimiento real puede variar.
 
 ---
 
+## 🎯 Roadmap V3.0 - Optimización para ROI 100% en 4 Meses
+
+### Objetivos V3.0
+
+| Métrica            | Actual            | Objetivo V3.0                   |
+| ------------------ | ----------------- | ------------------------------- |
+| **ROI en 4 meses** | ~76% (proyectado) | **100%**                        |
+| **ROI diario**     | ~1.0%             | **≥1.0%** (mantener o superar)  |
+| **Win-Rate**       | ~55% (estimado)   | **≥60%**                        |
+| **Risk-Reward**    | 1:1.5 (estimado)  | **≥1:2.5**                      |
+| **Prioridad**      | Buscar ganancias  | **Evitar pérdidas > Ganancias** |
+
+### Indicadores Técnicos a Implementar
+
+| Indicador             | Para Qué Sirve                    | Impacto en ROI                |
+| --------------------- | --------------------------------- | ----------------------------- |
+| RSI(14)               | Detectar sobrecompra/sobreventa   | +15-20% win-rate              |
+| EMA 20/50/200         | Confirmar tendencia               | Evita trades contra-tendencia |
+| MACD                  | Momentum y cruces                 | Mejores entradas              |
+| Bandas Bollinger      | Volatilidad + extremos            | Entradas en retrocesos        |
+| ATR                   | Volatilidad real para SL dinámico | SL más inteligentes           |
+| Volumen               | Confirmar movimientos             | Evita falsas rupturas         |
+| Soportes/Resistencias | Zonas clave                       | Mejor timing                  |
+
+### Gestión de Riesgo Avanzada (Planificado)
+
+| Feature                   | Descripción                | Beneficio          |
+| ------------------------- | -------------------------- | ------------------ |
+| Position Sizing por Kelly | % óptimo según win-rate    | Maximiza compuesto |
+| Drawdown máximo diario    | -3% máximo, pausar bot     | Protege capital    |
+| Correlación de posiciones | No abrir 3 correlacionadas | Diversifica riesgo |
+| Win-rate tracking         | Si < 50%, reducir riesgo   | Auto-ajuste        |
+
+> [!IMPORTANT]
+> V3.0 está en fase de planificación. Las mejoras se implementarán de forma gradual.
+
+---
+
 ## 🆕 Historial de Versiones
+
+### V3.0 (24/01/2026) - Resumen Semanal + ROI Objetivo 100%
+
+- ✅ **Resumen Semanal**: 1 solo mensaje cada viernes a las 18:00
+- ✅ **ROI Total Visible**: Muestra ganancia desde balance inicial ($5,293.49)
+- ✅ **Sin Notificaciones Individuales**: Eliminadas todas las alertas por trade
+- ✅ **Código Comentado**: Documentación detallada para estudio
+- ✅ **Stats Semanales**: Acumulación de trades ganados/perdidos por semana
+- 🎯 **Objetivo V3.0**: ROI 100% en 4 meses (≥1% diario)
 
 ### V2.8 (19/01/2026) - Resumen Diario + Optimización
 
