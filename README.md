@@ -74,9 +74,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 - ✅ **Resumen Semanal**: 1 solo mensaje cada viernes a las 18:00
 - ✅ **ROI Total Visible**: Muestra ganancia desde balance inicial ($5,293.49)
 - ✅ **Sin Notificaciones Individuales**: Eliminadas todas las alertas por trade
+- ✅ **Indicadores Técnicos V3.0**: RSI, EMA 20/50/200, MACD, Bollinger, ATR, Volumen, S/R
+- ✅ **Prompt IA Mejorado**: 13 reglas de trading + todos los indicadores
 - ✅ **Código Comentado**: Documentación detallada para estudio
 - ✅ **Stats Semanales**: Acumulación de trades ganados/perdidos por semana
-- ✅ **Max Posiciones 5**: Aumentado de 3 a 5 para mayor diversificación (24/01)
+- ✅ **Max Posiciones 5**: Aumentado de 3 a 5 para mayor diversificación
 - 🎯 **Objetivo V3.0**: ROI 100% en 4 meses (≥1% diario)
 
 ### V2.8 (19/01/2026) - Resumen Diario + Optimización

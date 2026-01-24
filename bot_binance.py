@@ -136,6 +136,466 @@ def obtener_fear_greed():
         return 50, "Neutral"  # Default si falla
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# INDICADORES TÉCNICOS V3.0 - Para mejorar decisiones de IA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def calcular_rsi(precios_cierre, periodo=14):
+    """
+    Calcula el RSI (Relative Strength Index) de una lista de precios.
+    
+    El RSI mide la velocidad y magnitud de los movimientos de precio recientes
+    para evaluar condiciones de sobrecompra o sobreventa.
+    
+    Parámetros:
+        precios_cierre: Lista de precios de cierre (más reciente al final)
+        periodo: Número de períodos para el cálculo (default 14)
+    
+    Retorna:
+        float: Valor RSI entre 0 y 100
+        - RSI > 70: Sobrecompra (posible venta)
+        - RSI < 30: Sobreventa (posible compra)
+        - RSI 30-70: Zona neutral
+    
+    Fórmula:
+        RSI = 100 - (100 / (1 + RS))
+        RS = Promedio de ganancias / Promedio de pérdidas
+    """
+    if len(precios_cierre) < periodo + 1:
+        return 50  # Valor neutral si no hay suficientes datos
+    
+    # Calcular cambios de precio
+    cambios = []
+    for i in range(1, len(precios_cierre)):
+        cambios.append(precios_cierre[i] - precios_cierre[i-1])
+    
+    # Separar ganancias y pérdidas
+    ganancias = [max(0, c) for c in cambios]
+    perdidas = [abs(min(0, c)) for c in cambios]
+    
+    # Calcular promedios del período
+    avg_ganancia = sum(ganancias[-periodo:]) / periodo
+    avg_perdida = sum(perdidas[-periodo:]) / periodo
+    
+    # Evitar división por cero
+    if avg_perdida == 0:
+        return 100  # Máximo RSI si no hay pérdidas
+    
+    # Calcular RS y RSI
+    rs = avg_ganancia / avg_perdida
+    rsi = 100 - (100 / (1 + rs))
+    
+    return round(rsi, 2)
+
+
+def calcular_ema(precios_cierre, periodo):
+    """
+    Calcula la EMA (Exponential Moving Average) de una lista de precios.
+    
+    La EMA da más peso a los precios recientes, reaccionando más rápido
+    que la SMA (Simple Moving Average) a cambios de precio.
+    
+    Parámetros:
+        precios_cierre: Lista de precios de cierre (más reciente al final)
+        periodo: Número de períodos (20, 50, 200 son comunes)
+    
+    Retorna:
+        float: Valor de la EMA
+    
+    Uso para tendencia:
+        - Precio > EMA: Tendencia alcista
+        - Precio < EMA: Tendencia bajista
+        - EMA corta > EMA larga: Cruce alcista (señal de compra)
+        - EMA corta < EMA larga: Cruce bajista (señal de venta)
+    
+    Fórmula:
+        Multiplicador = 2 / (periodo + 1)
+        EMA = (Precio_actual - EMA_anterior) * Multiplicador + EMA_anterior
+    """
+    if len(precios_cierre) < periodo:
+        return precios_cierre[-1] if precios_cierre else 0
+    
+    # Multiplicador de suavizado
+    multiplicador = 2 / (periodo + 1)
+    
+    # EMA inicial = SMA de los primeros 'periodo' valores
+    ema = sum(precios_cierre[:periodo]) / periodo
+    
+    # Calcular EMA para cada precio subsiguiente
+    for precio in precios_cierre[periodo:]:
+        ema = (precio - ema) * multiplicador + ema
+    
+    return round(ema, 4)
+
+
+def calcular_macd(precios_cierre, rapida=12, lenta=26, signal=9):
+    """
+    Calcula el MACD (Moving Average Convergence Divergence).
+    
+    El MACD muestra la relación entre dos EMAs y ayuda a identificar
+    cambios en la fuerza, dirección, momentum y duración de una tendencia.
+    
+    Parámetros:
+        precios_cierre: Lista de precios de cierre
+        rapida: Período EMA rápida (default 12)
+        lenta: Período EMA lenta (default 26)
+        signal: Período para línea de señal (default 9)
+    
+    Retorna:
+        dict con:
+        - macd: Línea MACD (EMA rápida - EMA lenta)
+        - signal: Línea de señal (EMA del MACD)
+        - histograma: MACD - Signal (positivo = bullish, negativo = bearish)
+    
+    Señales:
+        - MACD cruza arriba de Signal: Señal de compra
+        - MACD cruza abajo de Signal: Señal de venta
+        - Histograma creciente: Momentum alcista aumentando
+        - Histograma decreciente: Momentum bajista aumentando
+    """
+    if len(precios_cierre) < lenta + signal:
+        return {"macd": 0, "signal": 0, "histograma": 0}
+    
+    # Calcular EMAs
+    ema_rapida = calcular_ema(precios_cierre, rapida)
+    ema_lenta = calcular_ema(precios_cierre, lenta)
+    
+    # Línea MACD
+    macd = ema_rapida - ema_lenta
+    
+    # Para calcular Signal, necesitamos histórico de MACD
+    # Simplificación: usamos los últimos precios para aproximar
+    macd_historico = []
+    for i in range(signal + 10, len(precios_cierre)):
+        ema_r = calcular_ema(precios_cierre[:i], rapida)
+        ema_l = calcular_ema(precios_cierre[:i], lenta)
+        macd_historico.append(ema_r - ema_l)
+    
+    if len(macd_historico) >= signal:
+        signal_line = calcular_ema(macd_historico, signal)
+    else:
+        signal_line = macd
+    
+    histograma = macd - signal_line
+    
+    return {
+        "macd": round(macd, 4),
+        "signal": round(signal_line, 4),
+        "histograma": round(histograma, 4)
+    }
+
+
+def calcular_bollinger(precios_cierre, periodo=20, desviaciones=2):
+    """
+    Calcula las Bandas de Bollinger.
+    
+    Las Bandas de Bollinger miden la volatilidad y proporcionan niveles
+    relativos de precios altos y bajos.
+    
+    Parámetros:
+        precios_cierre: Lista de precios de cierre
+        periodo: Período para SMA (default 20)
+        desviaciones: Número de desviaciones estándar (default 2)
+    
+    Retorna:
+        dict con:
+        - superior: Banda superior (SMA + 2*StdDev)
+        - media: SMA del período
+        - inferior: Banda inferior (SMA - 2*StdDev)
+        - ancho: Ancho de banda (volatilidad)
+        - posicion: % del precio dentro de las bandas (0-100)
+    
+    Uso:
+        - Precio cerca de banda superior: Posible sobrecompra
+        - Precio cerca de banda inferior: Posible sobreventa
+        - Bandas estrechas: Baja volatilidad, posible ruptura próxima
+        - Bandas anchas: Alta volatilidad
+    """
+    if len(precios_cierre) < periodo:
+        precio_actual = precios_cierre[-1] if precios_cierre else 0
+        return {
+            "superior": precio_actual,
+            "media": precio_actual,
+            "inferior": precio_actual,
+            "ancho": 0,
+            "posicion": 50
+        }
+    
+    # Últimos N precios
+    ultimos = precios_cierre[-periodo:]
+    
+    # SMA (Media)
+    sma = sum(ultimos) / periodo
+    
+    # Desviación estándar
+    varianza = sum((p - sma) ** 2 for p in ultimos) / periodo
+    std_dev = varianza ** 0.5
+    
+    # Bandas
+    banda_superior = sma + (desviaciones * std_dev)
+    banda_inferior = sma - (desviaciones * std_dev)
+    
+    # Ancho de banda (% de volatilidad)
+    ancho = ((banda_superior - banda_inferior) / sma) * 100 if sma > 0 else 0
+    
+    # Posición del precio actual dentro de las bandas (0-100%)
+    precio_actual = precios_cierre[-1]
+    rango = banda_superior - banda_inferior
+    if rango > 0:
+        posicion = ((precio_actual - banda_inferior) / rango) * 100
+        posicion = max(0, min(100, posicion))  # Clamp entre 0 y 100
+    else:
+        posicion = 50
+    
+    return {
+        "superior": round(banda_superior, 4),
+        "media": round(sma, 4),
+        "inferior": round(banda_inferior, 4),
+        "ancho": round(ancho, 2),
+        "posicion": round(posicion, 1)
+    }
+
+
+def calcular_atr(precios_high, precios_low, precios_close, periodo=14):
+    """
+    Calcula el ATR (Average True Range).
+    
+    El ATR mide la volatilidad del mercado y es útil para:
+    - Establecer Stop Loss dinámicos (1x-2x ATR)
+    - Determinar tamaño de posición
+    - Identificar cambios en volatilidad
+    
+    Parámetros:
+        precios_high: Lista de precios máximos
+        precios_low: Lista de precios mínimos
+        precios_close: Lista de precios de cierre
+        periodo: Período para el promedio (default 14)
+    
+    Retorna:
+        float: Valor ATR (en unidades de precio)
+    
+    True Range = max(
+        High - Low,
+        abs(High - Close_anterior),
+        abs(Low - Close_anterior)
+    )
+    ATR = Promedio móvil del True Range
+    
+    Uso para Stop Loss:
+        - SL conservador: Precio - (2 * ATR)
+        - SL agresivo: Precio - (1 * ATR)
+    """
+    if len(precios_close) < periodo + 1:
+        # Fallback: usar rango simple
+        if precios_high and precios_low:
+            return precios_high[-1] - precios_low[-1]
+        return 0
+    
+    true_ranges = []
+    
+    for i in range(1, len(precios_close)):
+        high = precios_high[i]
+        low = precios_low[i]
+        close_prev = precios_close[i-1]
+        
+        # True Range es el máximo de estos tres valores
+        tr1 = high - low
+        tr2 = abs(high - close_prev)
+        tr3 = abs(low - close_prev)
+        
+        true_range = max(tr1, tr2, tr3)
+        true_ranges.append(true_range)
+    
+    # ATR = Promedio de los últimos 'periodo' True Ranges
+    if len(true_ranges) >= periodo:
+        atr = sum(true_ranges[-periodo:]) / periodo
+    else:
+        atr = sum(true_ranges) / len(true_ranges) if true_ranges else 0
+    
+    return round(atr, 4)
+
+
+def calcular_volumen_relativo(volumenes, periodo=20):
+    """
+    Calcula el volumen relativo comparado con el promedio.
+    
+    El volumen relativo ayuda a confirmar movimientos de precio:
+    - Alto volumen + movimiento fuerte = movimiento confirmado
+    - Bajo volumen + movimiento fuerte = posible falsa ruptura
+    
+    Parámetros:
+        volumenes: Lista de volúmenes (más reciente al final)
+        periodo: Período para calcular promedio (default 20)
+    
+    Retorna:
+        float: Ratio de volumen (1.0 = promedio, 2.0 = doble del promedio)
+    
+    Interpretación:
+        - > 1.5: Volumen alto (movimiento significativo)
+        - 0.8 - 1.5: Volumen normal
+        - < 0.8: Volumen bajo (posible falta de interés)
+    """
+    if len(volumenes) < periodo:
+        return 1.0  # Volumen promedio por defecto
+    
+    # Promedio de los últimos N períodos
+    promedio = sum(volumenes[-periodo:]) / periodo
+    
+    # Volumen actual
+    volumen_actual = volumenes[-1]
+    
+    # Ratio
+    if promedio > 0:
+        ratio = volumen_actual / promedio
+    else:
+        ratio = 1.0
+    
+    return round(ratio, 2)
+
+
+def detectar_soportes_resistencias(precios_high, precios_low, precios_close, ventana=20):
+    """
+    Detecta niveles de soporte y resistencia básicos.
+    
+    Soportes y resistencias son niveles donde el precio históricamente
+    ha encontrado dificultad para bajar (soporte) o subir (resistencia).
+    
+    Parámetros:
+        precios_high: Lista de precios máximos
+        precios_low: Lista de precios mínimos
+        precios_close: Lista de precios de cierre
+        ventana: Período para buscar máximos/mínimos (default 20)
+    
+    Retorna:
+        dict con:
+        - resistencia: Nivel de resistencia más cercano
+        - soporte: Nivel de soporte más cercano
+        - distancia_resistencia: % de distancia a resistencia
+        - distancia_soporte: % de distancia a soporte
+    
+    Método simplificado:
+        - Resistencia = Máximo de los últimos N períodos
+        - Soporte = Mínimo de los últimos N períodos
+    """
+    if not precios_high or not precios_low or len(precios_close) < ventana:
+        precio = precios_close[-1] if precios_close else 0
+        return {
+            "resistencia": precio,
+            "soporte": precio,
+            "distancia_resistencia": 0,
+            "distancia_soporte": 0
+        }
+    
+    # Resistencia = Máximo reciente
+    resistencia = max(precios_high[-ventana:])
+    
+    # Soporte = Mínimo reciente
+    soporte = min(precios_low[-ventana:])
+    
+    # Precio actual
+    precio_actual = precios_close[-1]
+    
+    # Distancias en porcentaje
+    if precio_actual > 0:
+        dist_resistencia = ((resistencia - precio_actual) / precio_actual) * 100
+        dist_soporte = ((precio_actual - soporte) / precio_actual) * 100
+    else:
+        dist_resistencia = 0
+        dist_soporte = 0
+    
+    return {
+        "resistencia": round(resistencia, 4),
+        "soporte": round(soporte, 4),
+        "distancia_resistencia": round(dist_resistencia, 2),
+        "distancia_soporte": round(dist_soporte, 2)
+    }
+
+
+def obtener_tendencia_ema(precio_actual, ema20, ema50, ema200=None):
+    """
+    Determina la tendencia basada en las EMAs.
+    
+    Parámetros:
+        precio_actual: Precio actual del activo
+        ema20: EMA de 20 períodos
+        ema50: EMA de 50 períodos
+        ema200: EMA de 200 períodos (opcional)
+    
+    Retorna:
+        str: 'ALCISTA_FUERTE', 'ALCISTA', 'BAJISTA', 'BAJISTA_FUERTE', o 'LATERAL'
+    
+    Lógica:
+        - Precio > EMA20 > EMA50 > EMA200 = Alcista fuerte
+        - Precio > EMA20 > EMA50 = Alcista
+        - Precio < EMA20 < EMA50 = Bajista
+        - Precio < EMA20 < EMA50 < EMA200 = Bajista fuerte
+    """
+    if ema200:
+        if precio_actual > ema20 > ema50 > ema200:
+            return "ALCISTA_FUERTE"
+        elif precio_actual < ema20 < ema50 < ema200:
+            return "BAJISTA_FUERTE"
+    
+    if precio_actual > ema20 > ema50:
+        return "ALCISTA"
+    elif precio_actual < ema20 < ema50:
+        return "BAJISTA"
+    else:
+        return "LATERAL"
+
+
+def analizar_indicadores_completo(klines):
+    """
+    Función principal que calcula TODOS los indicadores técnicos a partir de las velas.
+    
+    Parámetros:
+        klines: Lista de velas de Binance (formato [timestamp, open, high, low, close, volume, ...])
+    
+    Retorna:
+        dict con todos los indicadores calculados, listo para pasar a la IA
+    """
+    if not klines or len(klines) < 50:
+        return None
+    
+    # Extraer datos de las velas
+    precios_open = [float(k[1]) for k in klines]
+    precios_high = [float(k[2]) for k in klines]
+    precios_low = [float(k[3]) for k in klines]
+    precios_close = [float(k[4]) for k in klines]
+    volumenes = [float(k[5]) for k in klines]
+    
+    precio_actual = precios_close[-1]
+    
+    # Calcular indicadores
+    rsi = calcular_rsi(precios_close, 14)
+    ema20 = calcular_ema(precios_close, 20)
+    ema50 = calcular_ema(precios_close, 50)
+    ema200 = calcular_ema(precios_close, 200) if len(precios_close) >= 200 else None
+    macd = calcular_macd(precios_close)
+    bollinger = calcular_bollinger(precios_close)
+    atr = calcular_atr(precios_high, precios_low, precios_close)
+    volumen_rel = calcular_volumen_relativo(volumenes)
+    sr = detectar_soportes_resistencias(precios_high, precios_low, precios_close)
+    tendencia = obtener_tendencia_ema(precio_actual, ema20, ema50, ema200)
+    
+    return {
+        "precio_actual": precio_actual,
+        "rsi": rsi,
+        "ema20": ema20,
+        "ema50": ema50,
+        "ema200": ema200,
+        "tendencia_ema": tendencia,
+        "macd": macd,
+        "bollinger": bollinger,
+        "atr": atr,
+        "atr_percent": round((atr / precio_actual) * 100, 2) if precio_actual > 0 else 0,
+        "volumen_relativo": volumen_rel,
+        "soporte": sr["soporte"],
+        "resistencia": sr["resistencia"],
+        "dist_soporte": sr["distancia_soporte"],
+        "dist_resistencia": sr["distancia_resistencia"]
+    }
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # CÁLCULO DE MONTO (Escudo 80/20) - Entre 2% y 10%
 # ═══════════════════════════════════════════════════════════════════════════════
 def calcular_monto(saldo, confianza):
@@ -1025,48 +1485,110 @@ def ejecutar_trading(client, gemini_client):
                 
                 log(f"🧠 Analizando: {symbol}")
                 
-                precio_actual = velas[-1]['close']
+                # ═══════════════════════════════════════════════════════════════════
+                # V3.0: CALCULAR TODOS LOS INDICADORES TÉCNICOS
+                # ═══════════════════════════════════════════════════════════════════
+                # Convertir velas a formato para la función analizar_indicadores_completo
+                klines_format = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas]
+                indicadores = analizar_indicadores_completo(klines_format)
+                
+                if not indicadores:
+                    log(f"   ⚠️ No se pudieron calcular indicadores para {symbol}")
+                    continue
+                
+                precio_actual = indicadores['precio_actual']
                 precios = [v['close'] for v in velas[-100:]]
                 precio_max = max(precios)
                 precio_min = min(precios)
                 volatilidad = ((precio_max - precio_min) / precio_actual) * 100
                 posicion_rango = ((precio_actual - precio_min) / (precio_max - precio_min) * 100) if precio_max != precio_min else 50
                 
-                # Prompt mejorado con Fear & Greed y temporalidades
-                prompt = f"""Eres un trader profesional de criptomonedas con análisis técnico y fundamental.
+                # ═══════════════════════════════════════════════════════════════════
+                # V3.0: PROMPT MEJORADO CON INDICADORES TÉCNICOS
+                # ═══════════════════════════════════════════════════════════════════
+                # Este prompt incluye todos los indicadores calculados para que la IA
+                # tome decisiones más precisas basadas en análisis técnico real
+                prompt = f"""Eres un trader profesional de criptomonedas. Tu objetivo es lograr ROI 100% en 4 meses (~1% diario).
+REGLA PRINCIPAL: EVITAR PÉRDIDAS > Buscar ganancias.
 
-DATOS DEL MERCADO GLOBAL:
+═══════════════════════════════════════════════════════════════════
+DATOS DEL MERCADO GLOBAL
+═══════════════════════════════════════════════════════════════════
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-25: Extreme Fear (oportunidad de compra agresiva)
-- 26-45: Fear (considerar LONGs en soportes)
-- 46-55: Neutral
-- 56-75: Greed (precaución con LONGs)
-- 76-100: Extreme Greed (preferir SHORTs o WAIT)
+- 0-25: Extreme Fear → LONG agresivo en soportes
+- 26-45: Fear → LONGs en soportes
+- 46-55: Neutral → Solo si indicadores confirman
+- 56-75: Greed → Precaución, preferir SHORTs
+- 76-100: Extreme Greed → SHORTs o WAIT
 
-DATOS TÉCNICOS DE {symbol}:
+═══════════════════════════════════════════════════════════════════
+INDICADORES TÉCNICOS DE {symbol}
+═══════════════════════════════════════════════════════════════════
+📊 PRECIO Y RANGO:
 - Precio actual: ${precio_actual}
 - Máximo (100 velas): ${precio_max}
 - Mínimo (100 velas): ${precio_min}
-- Volatilidad: {volatilidad:.2f}%
 - Posición en rango: {posicion_rango:.1f}%
+- Volatilidad: {volatilidad:.2f}%
 
-TEMPORALIDADES DISPONIBLES: 15m, 30m, 1h, 4h
-- 15m: scalping rápido (volatilidad alta >5%)
-- 30m: trades cortos (volatilidad media 3-5%)
-- 1h: intraday (volatilidad normal 2-3%)
-- 4h: swing (volatilidad baja <2%)
+📈 RSI(14): {indicadores['rsi']}
+- RSI > 70: Sobrecompra → posible SHORT
+- RSI < 30: Sobreventa → posible LONG
+- RSI 30-70: Zona neutral
 
-REGLAS ESTRICTAS:
-1. Confianza mínima: 70%
-2. Si Fear < 30, PREFERIR LONGs en soportes
-3. Si Greed > 70, PREFERIR SHORTs o WAIT
-4. Si precio está en 20% inferior del rango → considerar LONG
-5. Si precio está en 80% superior del rango → considerar SHORT
-6. Si está en medio (30%-70%) → WAIT a menos que Fear/Greed sea extremo
-7. Elige la temporalidad según la volatilidad actual
+📉 EMAs (Tendencia):
+- EMA 20: ${indicadores['ema20']}
+- EMA 50: ${indicadores['ema50']}
+- EMA 200: ${indicadores['ema200'] if indicadores['ema200'] else 'N/A'}
+- Tendencia: {indicadores['tendencia_ema']}
+
+📊 MACD:
+- MACD: {indicadores['macd']['macd']}
+- Signal: {indicadores['macd']['signal']}
+- Histograma: {indicadores['macd']['histograma']} ({'BULLISH' if indicadores['macd']['histograma'] > 0 else 'BEARISH'})
+
+📉 BOLLINGER BANDS:
+- Superior: ${indicadores['bollinger']['superior']}
+- Media: ${indicadores['bollinger']['media']}
+- Inferior: ${indicadores['bollinger']['inferior']}
+- Posición en banda: {indicadores['bollinger']['posicion']}%
+- Ancho (volatilidad): {indicadores['bollinger']['ancho']}%
+
+📊 ATR (Volatilidad):
+- ATR: ${indicadores['atr']} ({indicadores['atr_percent']}% del precio)
+
+📈 VOLUMEN:
+- Volumen Relativo: {indicadores['volumen_relativo']}x (1.0 = promedio)
+
+🎯 SOPORTES/RESISTENCIAS:
+- Resistencia: ${indicadores['resistencia']} (+{indicadores['dist_resistencia']}%)
+- Soporte: ${indicadores['soporte']} (-{indicadores['dist_soporte']}%)
+
+═══════════════════════════════════════════════════════════════════
+REGLAS ESTRICTAS PARA ROI 100%
+═══════════════════════════════════════════════════════════════════
+1. NUNCA operar contra la tendencia EMA (si BAJISTA, no LONG)
+2. RSI < 30 + Tendencia ALCISTA = LONG fuerte
+3. RSI > 70 + Tendencia BAJISTA = SHORT fuerte
+4. Si precio cerca de banda inferior Bollinger = posible LONG
+5. Si precio cerca de banda superior Bollinger = posible SHORT
+6. MACD Histograma positivo creciente = confirma LONG
+7. MACD Histograma negativo decreciente = confirma SHORT
+8. Volumen > 1.5x = movimiento confirmado
+9. Volumen < 0.8x = posible falsa ruptura → WAIT
+10. Si precio muy cerca de resistencia = WAIT o SHORT
+11. Si precio muy cerca de soporte = WAIT o LONG
+12. Confianza mínima 70% para operar
+13. PREFERIR WAIT si indicadores contradictorios
+
+TEMPORALIDADES:
+- 15m: scalping (volatilidad >5%)
+- 30m: swing corto (volatilidad 3-5%)
+- 1h: intraday (volatilidad 2-3%)
+- 4h: swing largo (volatilidad <2%)
 
 JSON (solo esto, sin explicación adicional):
-{{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve"}}"""
+{{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve con indicadores clave"}}"""
                 
                 # Llamada al nuevo SDK google-genai
                 response = gemini_client.models.generate_content(
