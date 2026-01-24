@@ -24,7 +24,7 @@ TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
 APALANCAMIENTO = 3        # Apalancamiento conservador x3
 TOP_ACTIVOS = 15          # Activos a analizar por volumen
-MAX_POSICIONES = 3        # Máximo 3 posiciones simultáneas
+MAX_POSICIONES = 5        # Máximo 5 posiciones simultáneas (V3.0: mayor diversificación)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN

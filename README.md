@@ -76,6 +76,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 - ✅ **Sin Notificaciones Individuales**: Eliminadas todas las alertas por trade
 - ✅ **Código Comentado**: Documentación detallada para estudio
 - ✅ **Stats Semanales**: Acumulación de trades ganados/perdidos por semana
+- ✅ **Max Posiciones 5**: Aumentado de 3 a 5 para mayor diversificación (24/01)
 - 🎯 **Objetivo V3.0**: ROI 100% en 4 meses (≥1% diario)
 
 ### V2.8 (19/01/2026) - Resumen Diario + Optimización
@@ -124,7 +125,7 @@ ESCUDO_TRABAJO = 0.80        # 80% del balance para trading
 ESCUDO_SEGURO = 0.20         # 20% protegido
 APALANCAMIENTO = 3           # x3 conservador
 TOP_ACTIVOS = 15             # Analiza top 15 por volumen
-MAX_POSICIONES = 3           # Máximo 3 posiciones
+MAX_POSICIONES = 5           # Máximo 5 posiciones (V3.0: 24/01 - diversificación)
 TRAILING_SL_PERCENT = 0.015  # 1.5% trailing
 MONITOREO_INTERVALO = 60     # 60 segundos (Optimizado V2.8)
 
