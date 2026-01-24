@@ -56,6 +56,51 @@ stats_semanales = {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GESTIÓN DE RIESGO AVANZADA V3.0
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# --- DRAWDOWN MÁXIMO DIARIO ---
+# Si las pérdidas del día superan este %, el bot pausa nuevos trades hasta mañana
+# Esto protege el capital en días malos y evita "tilt"
+# Ejemplo: Con -3%, si pierdes $189 de $6,307 en un día → pausa
+DRAWDOWN_MAXIMO_DIARIO = 0.03       # -3% máximo pérdida diaria
+DRAWDOWN_ACTIVO = True              # Activar protección de drawdown
+
+# --- ATR PARA STOP LOSS DINÁMICO ---
+# El ATR mide la volatilidad real del mercado
+# SL basado en ATR se adapta a la volatilidad actual del activo
+# Multiplicadores recomendados:
+#   - 1.0x ATR: Agresivo (stop tight, más stops pero menos pérdida por stop)
+#   - 1.5x ATR: Balanceado (recomendado)
+#   - 2.0x ATR: Conservador (stop amplio, menos stops pero más pérdida por stop)
+ATR_SL_ACTIVO = True                # Usar ATR para calcular SL dinámico
+ATR_SL_MULTIPLICADOR = 1.5          # SL = Precio - (1.5 * ATR)
+
+# --- KELLY CRITERION PARA POSITION SIZING ---
+# Fórmula de Kelly: f* = (p * b - q) / b
+#   p = probabilidad de ganar (win-rate)
+#   q = probabilidad de perder (1 - p)
+#   b = ratio ganancia/pérdida promedio
+# El resultado es el % óptimo del capital a arriesgar
+# Usamos "medio Kelly" (50% del resultado) para ser más conservadores
+KELLY_ACTIVO = True                 # Usar Kelly Criterion para monto
+KELLY_FRACCION = 0.5                # Usar 50% del Kelly (más conservador)
+KELLY_MINIMO = 0.02                 # Mínimo 2% del capital
+KELLY_MAXIMO = 0.10                 # Máximo 10% del capital
+
+# Estadísticas diarias para drawdown y Kelly
+# Se resetean cada día a las 00:00
+stats_diarias = {
+    "balance_inicio_dia": 0,        # Balance al inicio del día
+    "trades_ganados": 0,            # Trades ganados hoy (para Kelly)
+    "trades_perdidos": 0,           # Trades perdidos hoy (para Kelly)
+    "monto_ganado": 0,              # Suma de ganancias hoy
+    "monto_perdido": 0,             # Suma de pérdidas hoy
+    "drawdown_pausado": False,      # True si bot pausado por drawdown
+    "fecha_actual": None            # Para detectar cambio de día
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # PROTECCIÓN CONTRA FUNDING FEES (V2.5)
 # ═══════════════════════════════════════════════════════════════════════════════
 FUNDING_PROTECTION = True       # Activar protección de funding
@@ -594,6 +639,243 @@ def analizar_indicadores_completo(klines):
         "dist_soporte": sr["distancia_soporte"],
         "dist_resistencia": sr["distancia_resistencia"]
     }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GESTIÓN DE RIESGO AVANZADA V3.0 - FUNCIONES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def verificar_nuevo_dia(balance_actual):
+    """
+    Verifica si es un nuevo día y reinicia las estadísticas diarias.
+    
+    Esta función se llama al inicio de cada ciclo para:
+    1. Detectar si cambió el día (usando la fecha actual)
+    2. Si es nuevo día: reiniciar stats_diarias y balance_inicio_dia
+    3. Si es el mismo día: mantener las estadísticas
+    
+    Parámetros:
+        balance_actual: Balance actual de la cuenta
+    
+    Retorna:
+        bool: True si es un nuevo día, False si es el mismo
+    """
+    from datetime import datetime
+    
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    
+    if stats_diarias["fecha_actual"] != hoy:
+        # Es un nuevo día - reiniciar estadísticas
+        stats_diarias["fecha_actual"] = hoy
+        stats_diarias["balance_inicio_dia"] = balance_actual
+        stats_diarias["trades_ganados"] = 0
+        stats_diarias["trades_perdidos"] = 0
+        stats_diarias["monto_ganado"] = 0
+        stats_diarias["monto_perdido"] = 0
+        stats_diarias["drawdown_pausado"] = False
+        log(f"📅 Nuevo día detectado: {hoy}. Stats diarias reiniciadas. Balance inicio: ${balance_actual:.2f}")
+        return True
+    
+    return False
+
+
+def verificar_drawdown_diario(balance_actual):
+    """
+    Verifica si se ha superado el drawdown máximo diario.
+    
+    El drawdown diario es la pérdida porcentual desde el inicio del día.
+    Si supera DRAWDOWN_MAXIMO_DIARIO (-3%), el bot pausa nuevos trades.
+    
+    Parámetros:
+        balance_actual: Balance actual de la cuenta
+    
+    Retorna:
+        bool: True si el bot debe seguir operando, False si debe pausar
+    
+    Fórmula:
+        drawdown = (balance_actual - balance_inicio_dia) / balance_inicio_dia
+        Si drawdown < -DRAWDOWN_MAXIMO_DIARIO → PAUSAR
+    
+    Ejemplo:
+        - Balance inicio día: $6,307
+        - Balance actual: $6,118
+        - Drawdown: -3.0% → PAUSAR
+    """
+    if not DRAWDOWN_ACTIVO:
+        return True  # Continuar si no está activo
+    
+    # Si ya está pausado, verificar si debemos seguir pausados
+    if stats_diarias["drawdown_pausado"]:
+        log("⏸️ Bot pausado por drawdown diario. Esperando nuevo día...")
+        return False
+    
+    balance_inicio = stats_diarias["balance_inicio_dia"]
+    
+    # Si no hay balance de inicio, no podemos calcular
+    if balance_inicio <= 0:
+        return True
+    
+    # Calcular drawdown actual
+    drawdown = (balance_actual - balance_inicio) / balance_inicio
+    
+    # Si el drawdown supera el máximo permitido
+    if drawdown < -DRAWDOWN_MAXIMO_DIARIO:
+        perdida_usd = balance_inicio - balance_actual
+        stats_diarias["drawdown_pausado"] = True
+        log(f"🛑 DRAWDOWN MÁXIMO ALCANZADO!")
+        log(f"   Balance inicio día: ${balance_inicio:.2f}")
+        log(f"   Balance actual: ${balance_actual:.2f}")
+        log(f"   Pérdida: ${perdida_usd:.2f} ({drawdown*100:.2f}%)")
+        log(f"   Límite: -{DRAWDOWN_MAXIMO_DIARIO*100}%")
+        log(f"   ⏸️ Bot PAUSADO hasta mañana. Guardian sigue activo.")
+        return False
+    
+    return True
+
+
+def calcular_sl_atr(precio_actual, atr, side):
+    """
+    Calcula el Stop Loss dinámico basado en ATR (Average True Range).
+    
+    El ATR representa la volatilidad real del mercado. Un SL basado en ATR
+    se adapta automáticamente a las condiciones actuales:
+    - Alta volatilidad → SL más amplio (evita stops innecesarios)
+    - Baja volatilidad → SL más tight (protege mejor)
+    
+    Parámetros:
+        precio_actual: Precio de entrada de la posición
+        atr: Valor ATR calculado para el activo
+        side: 'BUY' para LONG, 'SELL' para SHORT
+    
+    Retorna:
+        float: Precio del Stop Loss
+    
+    Fórmula:
+        LONG:  SL = Precio - (ATR * multiplicador)
+        SHORT: SL = Precio + (ATR * multiplicador)
+    
+    Ejemplo con ATR = $50, multiplicador 1.5:
+        - LONG @ $1000: SL = $1000 - $75 = $925
+        - SHORT @ $1000: SL = $1000 + $75 = $1075
+    """
+    if not ATR_SL_ACTIVO or atr <= 0:
+        # Fallback: usar SL fijo del 2.5%
+        if side == 'BUY':
+            return precio_actual * 0.975  # -2.5%
+        else:
+            return precio_actual * 1.025  # +2.5%
+    
+    # Calcular distancia del SL basada en ATR
+    distancia_sl = atr * ATR_SL_MULTIPLICADOR
+    
+    if side == 'BUY':  # LONG
+        sl_precio = precio_actual - distancia_sl
+    else:  # SHORT
+        sl_precio = precio_actual + distancia_sl
+    
+    return round(sl_precio, 4)
+
+
+def calcular_kelly(saldo_disponible, confianza_ia):
+    """
+    Calcula el monto óptimo de inversión usando el Kelly Criterion.
+    
+    El Kelly Criterion es una fórmula matemática que determina el % óptimo
+    del capital a arriesgar basándose en el historial de trades.
+    
+    Fórmula de Kelly:
+        f* = (p * b - q) / b
+        Donde:
+        - p = probabilidad de ganar (win-rate)
+        - q = probabilidad de perder (1 - p)
+        - b = ratio ganancia/pérdida promedio
+    
+    Usamos "Medio Kelly" (KELLY_FRACCION = 0.5) para ser más conservadores,
+    ya que el Kelly completo puede ser muy agresivo.
+    
+    Parámetros:
+        saldo_disponible: Capital disponible para trading
+        confianza_ia: Confianza de la IA (0.70 a 1.0)
+    
+    Retorna:
+        float: Monto a invertir en USD
+    
+    Ejemplo:
+        - Win-rate: 60% (0.6)
+        - Ratio G/P: 1.5
+        - Kelly = (0.6 * 1.5 - 0.4) / 1.5 = 0.33 (33%)
+        - Medio Kelly = 16.5%
+        - Limitado a KELLY_MAXIMO (10%) → 10%
+    """
+    if not KELLY_ACTIVO:
+        # Fallback al método original basado en confianza
+        rango_confianza = 1.0 - CONFIANZA_MINIMA
+        exceso = max(0, confianza_ia - CONFIANZA_MINIMA)
+        porcentaje = 2 + (exceso / rango_confianza) * 8
+        return saldo_disponible * (porcentaje / 100)
+    
+    # Obtener estadísticas de trades
+    total_trades = stats_diarias["trades_ganados"] + stats_diarias["trades_perdidos"]
+    
+    # Si no hay suficientes trades, usar método original
+    if total_trades < 5:
+        rango_confianza = 1.0 - CONFIANZA_MINIMA
+        exceso = max(0, confianza_ia - CONFIANZA_MINIMA)
+        porcentaje = 2 + (exceso / rango_confianza) * 8
+        return saldo_disponible * (porcentaje / 100)
+    
+    # Calcular win-rate (probabilidad de ganar)
+    p = stats_diarias["trades_ganados"] / total_trades
+    q = 1 - p
+    
+    # Calcular ratio ganancia/pérdida promedio
+    if stats_diarias["trades_perdidos"] > 0 and stats_diarias["monto_perdido"] > 0:
+        avg_ganancia = stats_diarias["monto_ganado"] / max(1, stats_diarias["trades_ganados"])
+        avg_perdida = stats_diarias["monto_perdido"] / stats_diarias["trades_perdidos"]
+        b = avg_ganancia / avg_perdida if avg_perdida > 0 else 1.5
+    else:
+        b = 1.5  # Default ratio
+    
+    # Fórmula de Kelly
+    # f* = (p * b - q) / b
+    kelly = (p * b - q) / b
+    
+    # Aplicar fracción Kelly (más conservador)
+    kelly_ajustado = kelly * KELLY_FRACCION
+    
+    # Limitar entre mínimo y máximo
+    kelly_final = max(KELLY_MINIMO, min(KELLY_MAXIMO, kelly_ajustado))
+    
+    # Si Kelly es negativo, usar mínimo (no deberíamos operar, pero usamos mínimo)
+    if kelly < 0:
+        kelly_final = KELLY_MINIMO
+        log(f"⚠️ Kelly negativo ({kelly*100:.1f}%). Usando mínimo {KELLY_MINIMO*100}%")
+    
+    monto = saldo_disponible * kelly_final
+    
+    if LOG_DETALLADO:
+        log(f"📊 Kelly: WR={p*100:.0f}% | Ratio={b:.2f} | Kelly={kelly*100:.1f}% | Final={kelly_final*100:.1f}% | ${monto:.2f}")
+    
+    return round(monto, 2)
+
+
+def actualizar_stats_trade(pnl):
+    """
+    Actualiza las estadísticas diarias después de cada trade cerrado.
+    
+    Esta función se llama cuando se cierra un trade para actualizar:
+    - Contador de trades ganados/perdidos
+    - Monto total ganado/perdido hoy
+    
+    Parámetros:
+        pnl: Profit/Loss del trade (positivo = ganancia, negativo = pérdida)
+    """
+    if pnl >= 0:
+        stats_diarias["trades_ganados"] += 1
+        stats_diarias["monto_ganado"] += pnl
+    else:
+        stats_diarias["trades_perdidos"] += 1
+        stats_diarias["monto_perdido"] += abs(pnl)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CÁLCULO DE MONTO (Escudo 80/20) - Entre 2% y 10%
@@ -1304,6 +1586,9 @@ def verificar_posiciones_cerradas(client):
                 stats_semanales["monto_perdido"] += abs(pnl)
                 log(f"💸 Posición perdida ({symbol}): -${abs(pnl):.2f}")
             
+            # V3.0: Actualizar también estadísticas diarias (para Kelly Criterion)
+            actualizar_stats_trade(pnl)
+            
             # V3.0: NO SE ENVÍA TELEGRAM INDIVIDUAL
             # Todas las estadísticas se incluyen en el resumen semanal del viernes
             
@@ -1624,7 +1909,8 @@ JSON (solo esto, sin explicación adicional):
                         'temporalidad': temporalidad,
                         'razon': razon,
                         'precio_actual': precio_actual,
-                        'volatilidad': volatilidad
+                        'volatilidad': volatilidad,
+                        'indicadores': indicadores  # V3.0: Guardamos indicadores para ATR SL
                     })
                     log(f"   ✨ Oportunidad guardada!")
                 elif accion == "WAIT":
@@ -1655,19 +1941,41 @@ JSON (solo esto, sin explicación adicional):
             temporalidad = op['temporalidad']
             precio_actual = op['precio_actual']
             razon = op['razon']
+            indicadores = op.get('indicadores', None)  # V3.0: Obtenemos indicadores
             
             conf_pct = int(confianza * 100)
-            monto = calcular_monto(saldo, confianza)
+            
+            # ═════════════════════════════════════════════════════════════════
+            # V3.0: KELLY CRITERION PARA POSITION SIZING
+            # Calcula el monto óptimo basándose en win-rate histórico
+            # ═════════════════════════════════════════════════════════════════
+            saldo_disponible = saldo * ESCUDO_TRABAJO
+            if KELLY_ACTIVO:
+                monto = calcular_kelly(saldo_disponible, confianza)
+            else:
+                monto = calcular_monto(saldo, confianza)
             
             # Obtener TP/SL según temporalidad
             config = TP_SL_CONFIG.get(temporalidad, TP_SL_CONFIG["1h"])
             
             if accion == "LONG":
                 tp = precio_actual * (1 + config["tp"])
-                sl = precio_actual * (1 - config["sl"])
+                # ═════════════════════════════════════════════════════════════
+                # V3.0: ATR PARA STOP LOSS DINÁMICO
+                # El SL se adapta a la volatilidad actual del mercado
+                # ═════════════════════════════════════════════════════════════
+                if ATR_SL_ACTIVO and indicadores and indicadores.get('atr', 0) > 0:
+                    sl = calcular_sl_atr(precio_actual, indicadores['atr'], 'BUY')
+                    log(f"   📊 SL dinámico ATR: ${sl:.4f} (ATR: ${indicadores['atr']:.4f})")
+                else:
+                    sl = precio_actual * (1 - config["sl"])
             else:  # SHORT
                 tp = precio_actual * (1 - config["tp"])
-                sl = precio_actual * (1 + config["sl"])
+                if ATR_SL_ACTIVO and indicadores and indicadores.get('atr', 0) > 0:
+                    sl = calcular_sl_atr(precio_actual, indicadores['atr'], 'SELL')
+                    log(f"   📊 SL dinámico ATR: ${sl:.4f} (ATR: ${indicadores['atr']:.4f})")
+                else:
+                    sl = precio_actual * (1 + config["sl"])
             
             # Configurar apalancamiento
             configurar_apalancamiento(client, symbol, APALANCAMIENTO)
@@ -1811,8 +2119,22 @@ while True:
         ciclo_analisis += 1
         
         # ═════════════════════════════════════════════════════════════════════
+        # V3.0: GESTIÓN DE RIESGO AVANZADA - Verificación diaria
+        # Reinicia stats al inicio de cada día y verifica drawdown máximo
+        # ═════════════════════════════════════════════════════════════════════
+        balance_actual = obtener_balance(client)
+        
+        # Verificar si es un nuevo día (reinicia stats_diarias)
+        verificar_nuevo_dia(balance_actual)
+        
+        # Verificar drawdown máximo diario (-3%)
+        # Si se supera, el bot pausa nuevos trades pero Guardian sigue activo
+        puede_operar = verificar_drawdown_diario(balance_actual)
+        
+        # ═════════════════════════════════════════════════════════════════════
         # GUARDIAN SYSTEM - Monitoreo cada ciclo (protección de emergencia)
         # Cierra posiciones automáticamente si la pérdida supera -10%
+        # El Guardian SIEMPRE corre, incluso si el bot está pausado por drawdown
         # ═════════════════════════════════════════════════════════════════════
         if GUARDIAN_ACTIVO:
             guardian_posiciones(client)       # Verificar pérdidas excesivas
@@ -1842,9 +2164,15 @@ while True:
         if FUNDING_PROTECTION:
             verificar_tiempo_posiciones(client)
         
+        # ═════════════════════════════════════════════════════════════════════
+        # V3.0: TRADING - Solo si NO estamos pausados por drawdown
+        # ═════════════════════════════════════════════════════════════════════
         # Cada N ciclos, hacer análisis completo de mercado
         if ciclo_analisis >= CICLOS_PARA_ANALISIS:
-            ejecutar_trading(client, gemini_client)
+            if puede_operar:
+                ejecutar_trading(client, gemini_client)
+            else:
+                log("⏸️ Trading pausado por protección de drawdown diario")
             ciclo_analisis = 0
         else:
             # V2.8: Log de monitoreo cada 5 min para salvar recursos

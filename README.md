@@ -76,8 +76,9 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 - ✅ **Sin Notificaciones Individuales**: Eliminadas todas las alertas por trade
 - ✅ **Indicadores Técnicos V3.0**: RSI, EMA 20/50/200, MACD, Bollinger, ATR, Volumen, S/R
 - ✅ **Prompt IA Mejorado**: 13 reglas de trading + todos los indicadores
-- ✅ **Código Comentado**: Documentación detallada para estudio
-- ✅ **Stats Semanales**: Acumulación de trades ganados/perdidos por semana
+- ✅ **Drawdown Máximo Diario**: Pausa bot si pérdida > -3% en un día
+- ✅ **ATR Stop Loss Dinámico**: SL = 1.5x ATR (se adapta a volatilidad)
+- ✅ **Kelly Criterion**: Position sizing óptimo basado en win-rate (50% Kelly)
 - ✅ **Max Posiciones 5**: Aumentado de 3 a 5 para mayor diversificación
 - 🎯 **Objetivo V3.0**: ROI 100% en 4 meses (≥1% diario)
 
