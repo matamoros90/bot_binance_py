@@ -1050,7 +1050,7 @@ def cancelar_ordenes_sl(client, symbol):
             log(f"⚠️ Error cancelando órdenes SL de {symbol}: {e}")
 
 def crear_orden_sl(client, symbol, side, precio, cantidad):
-    """Crea una nueva orden Stop Loss"""
+    """Crea una nueva orden Stop Loss usando Algo Order API (Binance Dic 2025+)"""
     try:
         # Obtener precisión del precio
         info = client.futures_exchange_info()
@@ -1059,12 +1059,13 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             price_precision = int(symbol_info['pricePrecision'])
             precio = round(precio, price_precision)
         
-        client.futures_create_order(
+        # Usar Algo Order API (STOP_MARKET migrado a este endpoint desde Dic 2025)
+        client.futures_create_algo_order(
             symbol=symbol,
             side=side,
             type='STOP_MARKET',
-            stopPrice=precio,
-            quantity=cantidad
+            stopPrice=str(precio),
+            quantity=str(cantidad)
         )
         return True
     except Exception as e:
@@ -1513,11 +1514,12 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
             # Stop Loss inicial (será reemplazado por trailing)
             try:
                 sl_side = 'SELL' if side == 'BUY' else 'BUY'
-                client.futures_create_order(
+                # Usar Algo Order API (STOP_MARKET migrado a este endpoint desde Dic 2025)
+                client.futures_create_algo_order(
                     symbol=symbol,
                     side=sl_side,
                     type='STOP_MARKET',
-                    stopPrice=sl,
+                    stopPrice=str(sl),
                     closePosition=True
                 )
                 log(f"   📉 SL inicial: ${sl} (Trailing activo)")

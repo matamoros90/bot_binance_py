@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V2.8                                   |
+| **Versión**    | V3.1                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -68,6 +68,13 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.1 (31/01/2026) - Fix Stop Loss API (Algo Order)
+
+- ✅ **Migración Algo Order API**: STOP_MARKET y TAKE_PROFIT_MARKET ahora usan `futures_create_algo_order()`
+- ✅ **python-binance actualizado**: v1.0.19 → v1.0.34 (soporte Algo Orders)
+- 🔧 **Bug Fix**: Resuelto error `-4120` que impedía crear órdenes Stop Loss
+- 📝 **Contexto**: Binance migró órdenes condicionales a Algo Order API desde Dic 2025
 
 ### V3.0 (24/01/2026) - Resumen Semanal + ROI Objetivo 100%
 
