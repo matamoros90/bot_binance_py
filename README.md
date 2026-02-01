@@ -6,11 +6,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 23/01/2026)
+## 🚀 Estado del Proyecto (Última actualización: 01/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.1.2                                 |
+| **Versión**    | V3.1.3                                 |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -68,6 +68,13 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.1.3 (01/02/2026) - Fix Dual-Endpoint SL Detection
+
+- 🔧 **Bug Fix**: Verificación de SL ahora consulta AMBOS endpoints (Algo + Tradicional)
+- 🔇 **Mejora**: Error `-4045` (max stop orders) se silencia porque indica protección activa
+- 📝 **Contexto**: Testnet devuelve órdenes condicionales en endpoints diferentes
+- ✅ **Resultado**: Eliminados logs repetitivos "SIN orden SL" y errores `-4045`
 
 ### V3.1.2 (31/01/2026) - Fix SL Detection for Algo Orders
 

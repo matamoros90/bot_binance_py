@@ -1069,6 +1069,12 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
         )
         return True
     except Exception as e:
+        error_str = str(e)
+        # V3.1.3: Silenciar error -4045 (max stop order limit)
+        # Este error indica que YA HAY suficientes SL, lo cual es bueno
+        if '-4045' in error_str:
+            # No loguear - simplemente hay demasiados SL (protección OK)
+            return False
         log(f"⚠️ Error creando SL: {e}")
         return False
 
@@ -1227,19 +1233,35 @@ def verificar_ordenes_sl_existen(client):
             if cantidad == 0:
                 continue
             
-            # Verificar si hay órdenes SL para este símbolo
-            # NOTA: Usamos futures_get_open_algo_orders porque desde Dic 2025
-            # las órdenes STOP_MARKET se crean con Algo Order API y NO aparecen
-            # en futures_get_open_orders (que solo muestra órdenes tradicionales)
+            # V3.1.3: Verificar SL en AMBOS endpoints (tradicional + Algo Orders)
+            # Binance Testnet puede devolver órdenes condicionales en diferentes endpoints
             try:
-                # Obtener Algo Orders (donde están los SL desde V3.1)
-                algo_ordenes = client.futures_get_open_algo_orders()
-                # Filtrar por símbolo y tipo STOP_MARKET
-                tiene_sl = any(
-                    o.get('symbol') == symbol and o.get('type') == 'STOP_MARKET' 
-                    for o in algo_ordenes
-                )
+                tiene_sl = False
                 
+                # 1. Primero buscar en Algo Orders (endpoint nuevo desde Dic 2025)
+                try:
+                    algo_ordenes = client.futures_get_open_algo_orders()
+                    if algo_ordenes:
+                        tiene_sl = any(
+                            o.get('symbol') == symbol and o.get('type') == 'STOP_MARKET' 
+                            for o in algo_ordenes
+                        )
+                except:
+                    pass
+                
+                # 2. Si no encontró, también buscar en órdenes tradicionales/condicionales
+                if not tiene_sl:
+                    try:
+                        ordenes_tradicionales = client.futures_get_open_orders(symbol=symbol)
+                        if ordenes_tradicionales:
+                            tiene_sl = any(
+                                o.get('type') in ['STOP_MARKET', 'STOP'] 
+                                for o in ordenes_tradicionales
+                            )
+                    except:
+                        pass
+                
+                # Solo crear SL si definitivamente no existe
                 if not tiene_sl:
                     entry_price = float(pos['entryPrice'])
                     side = 'LONG' if cantidad > 0 else 'SHORT'
@@ -1256,8 +1278,6 @@ def verificar_ordenes_sl_existen(client):
                     
                     if crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad)):
                         log(f"✅ SL de emergencia creado para {symbol}")
-                        # V3.0: Ya no se envía Telegram individual
-                        # enviar_telegram(f"⚠️ *SL FALTANTE DETECTADO*\n*Par:* `{symbol}`\n*SL creado a:* `${sl_precio:.4f}` (10%)")
                     
             except Exception as e:
                 if LOG_DETALLADO:
