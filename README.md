@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.2                                   |
+| **Versión**    | V3.3                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -22,7 +22,8 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 | 04/01 - 07/01 | $5,293.49       | $5,438.59      | +$145.10       | +2.74%      |
 | 07/01 - 18/01 | $5,438.59       | $6,576.60      | +$1,138.01     | +20.92%     |
 | 18/01 - 23/01 | $6,576.60       | $6,307.20      | -$269.40       | -4.10%      |
-| **TOTAL**     | $5,293.49       | **$6,307.20**  | **+$1,013.71** | **+19.15%** |
+| 23/01 - 01/02 | $6,307.20       | $6,333.65      | +$26.45        | +0.42%      |
+| **TOTAL**     | $5,293.49       | **$6,333.65**  | **+$1,040.16** | **+19.65%** |
 
 > [!NOTE]
 > Estos resultados son en TESTNET. El rendimiento real puede variar.
@@ -68,6 +69,14 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.3 (01/02/2026) - Trading Oportunista
+
+- ⚡ **Cambio Mayor**: Prompt de IA completamente rediseñado
+- 🟢 **LONG agresivo** cuando Fear & Greed < 20 (Extreme Fear)
+- 🔴 **SHORT agresivo** cuando EMA bajista + MACD negativo
+- ✅ **Menos WAIT**: Solo espera si volumen < 0.5x o RSI neutral
+- 🎯 **Objetivo**: Capturar movimientos alcistas Y bajistas
 
 ### V3.2 (01/02/2026) - IA Menos Conservadora
 

@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.2 - Dual SL Detection + IA Menos Conservadora (65%)
+# V3.3 - Trading Oportunista (LONG en Fear, SHORT en caídas)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -142,7 +142,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.2 ALIVE - DUAL SL DETECTION + IA 65%")
+            self.wfile.write(b"BINANCE BOT V3.3 - OPPORTUNISTIC TRADING")
         def log_message(self, format, *args):
             pass
     try:
@@ -1824,17 +1824,17 @@ def ejecutar_trading(client, gemini_client):
                 # Este prompt incluye todos los indicadores calculados para que la IA
                 # tome decisiones más precisas basadas en análisis técnico real
                 prompt = f"""Eres un trader profesional de criptomonedas. Tu objetivo es lograr ROI 100% en 4 meses (~1% diario).
-REGLA PRINCIPAL: EVITAR PÉRDIDAS > Buscar ganancias.
+REGLA PRINCIPAL: SER OPORTUNISTA - Capturar movimientos tanto alcistas como bajistas.
 
 ═══════════════════════════════════════════════════════════════════
 DATOS DEL MERCADO GLOBAL
 ═══════════════════════════════════════════════════════════════════
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-25: Extreme Fear → LONG agresivo en soportes
-- 26-45: Fear → LONGs en soportes
-- 46-55: Neutral → Solo si indicadores confirman
-- 56-75: Greed → Precaución, preferir SHORTs
-- 76-100: Extreme Greed → SHORTs o WAIT
+- 0-20: Extreme Fear → LONG AGRESIVO (mercado sobrevendido, ¡OPORTUNIDAD!)
+- 21-40: Fear → LONGs en soportes
+- 41-60: Neutral → Seguir tendencia EMA
+- 61-80: Greed → SHORTs cerca de resistencias
+- 81-100: Extreme Greed → SHORT AGRESIVO (mercado sobrecomprado)
 
 ═══════════════════════════════════════════════════════════════════
 INDICADORES TÉCNICOS DE {symbol}
@@ -1847,8 +1847,8 @@ INDICADORES TÉCNICOS DE {symbol}
 - Volatilidad: {volatilidad:.2f}%
 
 📈 RSI(14): {indicadores['rsi']}
-- RSI > 70: Sobrecompra → posible SHORT
-- RSI < 30: Sobreventa → posible LONG
+- RSI > 70: Sobrecompra → SHORT
+- RSI < 30: Sobreventa → LONG
 - RSI 30-70: Zona neutral
 
 📉 EMAs (Tendencia):
@@ -1880,21 +1880,33 @@ INDICADORES TÉCNICOS DE {symbol}
 - Soporte: ${indicadores['soporte']} (-{indicadores['dist_soporte']}%)
 
 ═══════════════════════════════════════════════════════════════════
-REGLAS ESTRICTAS PARA ROI 100%
+REGLAS V3.3 - TRADING OPORTUNISTA
 ═══════════════════════════════════════════════════════════════════
-1. NUNCA operar contra la tendencia EMA (si BAJISTA, no LONG)
-2. RSI < 30 + Tendencia ALCISTA = LONG fuerte
-3. RSI > 70 + Tendencia BAJISTA = SHORT fuerte
-4. Si precio cerca de banda inferior Bollinger = posible LONG
-5. Si precio cerca de banda superior Bollinger = posible SHORT
-6. MACD Histograma positivo creciente = confirma LONG
-7. MACD Histograma negativo decreciente = confirma SHORT
-8. Volumen > 1.5x = movimiento confirmado
-9. Volumen < 0.8x = posible falsa ruptura → WAIT
-10. Si precio muy cerca de resistencia = WAIT o SHORT
-11. Si precio muy cerca de soporte = WAIT o LONG
-12. Confianza mínima 70% para operar
-13. PREFERIR WAIT si indicadores contradictorios
+🔴 REGLAS PARA SHORT (ganar en caídas):
+1. Tendencia EMA BAJISTA fuerte → SHORT (¡aprovechar la caída!)
+2. RSI > 70 (sobrecompra) → SHORT
+3. Fear & Greed > 75 → SHORT
+4. Precio cerca de resistencia + rechazo → SHORT
+
+🟢 REGLAS PARA LONG (ganar en subidas):
+5. Fear & Greed < 25 → LONG (Extreme Fear = OPORTUNIDAD de compra)
+6. RSI < 30 (sobreventa) → LONG
+7. Precio en soporte + rebote → LONG
+8. Precio en banda inferior Bollinger → LONG
+
+⚡ REGLA ESPECIAL EXTREME FEAR (Fear < 20):
+- IGNORAR tendencia EMA bajista
+- PREFERIR LONG aunque EMA sea bajista
+- El mercado ya cayó mucho, es hora de COMPRAR
+
+⚡ REGLA ESPECIAL TENDENCIA BAJISTA FUERTE:
+- Si EMA bajista + MACD negativo + Volumen alto → SHORT agresivo
+- Ganar dinero mientras el mercado cae
+
+❌ SOLO usar WAIT si:
+- Volumen < 0.5x (mercado sin movimiento)
+- RSI entre 45-55 y tendencia LATERAL
+- NO usar WAIT solo porque hay indicadores mixtos
 
 TEMPORALIDADES:
 - 15m: scalping (volatilidad >5%)
@@ -2043,7 +2055,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V3.2 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V3.3 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
@@ -2059,7 +2071,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V3.2:*
+🆕 *FUNCIONES V3.3:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `15m, 30m, 1h, 4h`
@@ -2080,7 +2092,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V3.2...")
+log("🚀 Iniciando Bot Binance Futuros V3.3...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2209,7 +2221,7 @@ while True:
             mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
             if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V3.2... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V3.3... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
         
         time.sleep(MONITOREO_INTERVALO)
         
