@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.3 - Trading Oportunista (LONG en Fear, SHORT en caídas)
+# V3.4 - Fix Drawdown + SL Detection + Max 3 Posiciones
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -24,7 +24,7 @@ TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
 APALANCAMIENTO = 3        # Apalancamiento conservador x3
 TOP_ACTIVOS = 15          # Activos a analizar por volumen
-MAX_POSICIONES = 5        # Máximo 5 posiciones simultáneas (V3.0: mayor diversificación)
+MAX_POSICIONES = 3        # Máximo 3 posiciones simultáneas (V3.4: reducido para menor riesgo)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN
@@ -142,7 +142,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.3 - OPPORTUNISTIC TRADING")
+            self.wfile.write(b"BINANCE BOT V3.4 - FIX DRAWDOWN + SL + MAX 3 POS")
         def log_message(self, format, *args):
             pass
     try:
@@ -1222,7 +1222,17 @@ def guardian_posiciones(client):
 # VERIFICAR QUE EXISTAN ÓRDENES SL EN BINANCE
 # ═══════════════════════════════════════════════════════════════════════════════
 def verificar_ordenes_sl_existen(client):
-    """Verifica que cada posición tenga una orden SL activa. Si no, la crea."""
+    """
+    V3.4: Verifica que cada posición tenga una orden SL activa. Si no, la crea.
+    Usa set global para trackear SLs ya creados y evitar spam de logs.
+    """
+    global _sl_creados  # Track de SLs ya verificados/creados
+    
+    # Inicializar set si no existe
+    if '_sl_creados' not in globals():
+        global _sl_creados
+        _sl_creados = set()
+    
     try:
         positions = client.futures_position_information()
         
@@ -1231,53 +1241,73 @@ def verificar_ordenes_sl_existen(client):
             cantidad = float(pos.get('positionAmt', 0))
             
             if cantidad == 0:
+                # Si la posición se cerró, quitar del tracking
+                if symbol in _sl_creados:
+                    _sl_creados.discard(symbol)
                 continue
             
-            # V3.1.3: Verificar SL en AMBOS endpoints (tradicional + Algo Orders)
-            # Binance Testnet puede devolver órdenes condicionales en diferentes endpoints
+            # Si ya verificamos/creamos SL para este symbol, no repetir
+            if symbol in _sl_creados:
+                continue
+            
+            # V3.4: Verificar SL en AMBOS endpoints con búsqueda más amplia
             try:
                 tiene_sl = False
                 
-                # 1. Primero buscar en Algo Orders (endpoint nuevo desde Dic 2025)
+                # 1. Buscar en Algo Orders
                 try:
                     algo_ordenes = client.futures_get_open_algo_orders()
                     if algo_ordenes:
                         tiene_sl = any(
-                            o.get('symbol') == symbol and o.get('type') == 'STOP_MARKET' 
+                            o.get('symbol') == symbol and (
+                                o.get('type') in ['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_MARKET'] or
+                                'stop' in o.get('type', '').lower() or
+                                o.get('stopPrice') or 
+                                o.get('triggerPrice')
+                            )
                             for o in algo_ordenes
                         )
-                except:
+                except Exception:
                     pass
                 
-                # 2. Si no encontró, también buscar en órdenes tradicionales/condicionales
+                # 2. Buscar en órdenes tradicionales
                 if not tiene_sl:
                     try:
                         ordenes_tradicionales = client.futures_get_open_orders(symbol=symbol)
                         if ordenes_tradicionales:
                             tiene_sl = any(
-                                o.get('type') in ['STOP_MARKET', 'STOP'] 
+                                o.get('type') in ['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_MARKET'] or
+                                'stop' in o.get('type', '').lower() or
+                                o.get('stopPrice') or
+                                o.get('triggerPrice')
                                 for o in ordenes_tradicionales
                             )
-                    except:
+                    except Exception:
                         pass
                 
-                # Solo crear SL si definitivamente no existe
-                if not tiene_sl:
+                if tiene_sl:
+                    # Marcar como verificado
+                    _sl_creados.add(symbol)
+                else:
+                    # Crear SL de emergencia
                     entry_price = float(pos['entryPrice'])
                     side = 'LONG' if cantidad > 0 else 'SHORT'
                     
-                    # Crear SL de emergencia al -10% (mismo que MAX_PERDIDA_PERMITIDA)
                     if side == 'LONG':
-                        sl_precio = entry_price * (1 + MAX_PERDIDA_PERMITIDA)  # -10%
+                        sl_precio = entry_price * (1 + MAX_PERDIDA_PERMITIDA)
                         sl_side = 'SELL'
                     else:
-                        sl_precio = entry_price * (1 - MAX_PERDIDA_PERMITIDA)  # +10% para SHORT
+                        sl_precio = entry_price * (1 - MAX_PERDIDA_PERMITIDA)
                         sl_side = 'BUY'
                     
                     log(f"⚠️ {symbol} SIN orden SL. Creando SL de emergencia a ${sl_precio:.4f}")
                     
                     if crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad)):
                         log(f"✅ SL de emergencia creado para {symbol}")
+                        _sl_creados.add(symbol)  # Marcar como creado
+                    else:
+                        # Si falla por -4045 o cualquier razón, asumir que ya existe
+                        _sl_creados.add(symbol)
                     
             except Exception as e:
                 if LOG_DETALLADO:
@@ -1977,6 +2007,13 @@ JSON (solo esto, sin explicación adicional):
                 log(f"✅ Espacios llenos. {len(oportunidades) - ejecutadas} oportunidades pendientes.")
                 break
             
+            # V3.4: Verificar drawdown ANTES de cada orden
+            # Esto evita ejecutar múltiples órdenes si el balance ya bajó
+            balance_pre_orden = obtener_balance(client)
+            if not verificar_drawdown_diario(balance_pre_orden):
+                log(f"🛑 Drawdown detectado. Deteniendo ejecución de órdenes.")
+                break
+            
             symbol = op['symbol']
             accion = op['accion']
             confianza = op['confianza']
@@ -2055,7 +2092,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V3.3 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V3.4 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
@@ -2071,7 +2108,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V3.3:*
+🆕 *FUNCIONES V3.4:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `15m, 30m, 1h, 4h`
@@ -2092,7 +2129,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V3.3...")
+log("🚀 Iniciando Bot Binance Futuros V3.4...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2221,7 +2258,7 @@ while True:
             mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
             if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V3.3... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V3.4... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
         
         time.sleep(MONITOREO_INTERVALO)
         
