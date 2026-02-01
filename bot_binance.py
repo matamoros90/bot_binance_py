@@ -142,7 +142,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V2.8 ALIVE - DAILY SUMMARY + OPTIMIZATION")
+            self.wfile.write(b"BINANCE BOT V3.2 ALIVE - DUAL SL DETECTION + IA 65%")
         def log_message(self, format, *args):
             pass
     try:
@@ -2043,7 +2043,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V2.8 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V3.2 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
@@ -2059,7 +2059,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V2.8:*
+🆕 *FUNCIONES V3.2:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `15m, 30m, 1h, 4h`
@@ -2080,7 +2080,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V2.8...")
+log("🚀 Iniciando Bot Binance Futuros V3.2...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2209,7 +2209,7 @@ while True:
             mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
             if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V2.8... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V3.2... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
         
         time.sleep(MONITOREO_INTERVALO)
         
