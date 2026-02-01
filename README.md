@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.1                                   |
+| **Versión**    | V3.1.2                                 |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -69,9 +69,20 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ## 🆕 Historial de Versiones
 
+### V3.1.2 (31/01/2026) - Fix SL Detection for Algo Orders
+
+- 🔧 **Bug Fix**: Detección de SL ahora usa `futures_get_open_algo_orders()`
+- 📝 **Problema**: Endpoint antiguo no mostraba Algo Orders, causando SL duplicados
+- ✅ **Resultado**: Ya no se crean SL repetidamente para la misma posición
+
+### V3.1.1 (31/01/2026) - Hotfix triggerPrice
+
+- 🔧 **Bug Fix**: Cambiado parámetro `stopPrice` → `triggerPrice`
+- 📝 **Error resuelto**: `-1102` (Mandatory parameter 'triggerprice' was not sent)
+
 ### V3.1 (31/01/2026) - Fix Stop Loss API (Algo Order)
 
-- ✅ **Migración Algo Order API**: STOP_MARKET y TAKE_PROFIT_MARKET ahora usan `futures_create_algo_order()`
+- ✅ **Migración Algo Order API**: STOP_MARKET ahora usa `futures_create_algo_order()`
 - ✅ **python-binance actualizado**: v1.0.19 → v1.0.34 (soporte Algo Orders)
 - 🔧 **Bug Fix**: Resuelto error `-4120` que impedía crear órdenes Stop Loss
 - 📝 **Contexto**: Binance migró órdenes condicionales a Algo Order API desde Dic 2025
