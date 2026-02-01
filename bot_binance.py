@@ -17,7 +17,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-CONFIANZA_MINIMA = 0.70   # 70% - Solo operaciones de alta certeza
+CONFIANZA_MINIMA = 0.65   # 65% - Permitir más operaciones (antes 70%)
 ESCUDO_TRABAJO = 0.80     # 80% del balance disponible para trading
 ESCUDO_SEGURO = 0.20      # 20% protegido
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo

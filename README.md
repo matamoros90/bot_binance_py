@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.1.3                                 |
+| **Versión**    | V3.2                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -68,6 +68,12 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.2 (01/02/2026) - IA Menos Conservadora
+
+- 🎯 **Cambio**: `CONFIANZA_MINIMA` reducida de 70% → **65%**
+- 📈 **Objetivo**: Permitir más operaciones durante Extreme Fear
+- 🛡️ **Riesgo**: Bajo - misma lógica de IA, solo umbral más permisivo
 
 ### V3.1.3 (01/02/2026) - Fix Dual-Endpoint SL Detection
 
