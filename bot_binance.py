@@ -1228,9 +1228,17 @@ def verificar_ordenes_sl_existen(client):
                 continue
             
             # Verificar si hay órdenes SL para este símbolo
+            # NOTA: Usamos futures_get_open_algo_orders porque desde Dic 2025
+            # las órdenes STOP_MARKET se crean con Algo Order API y NO aparecen
+            # en futures_get_open_orders (que solo muestra órdenes tradicionales)
             try:
-                ordenes = client.futures_get_open_orders(symbol=symbol)
-                tiene_sl = any(o['type'] == 'STOP_MARKET' for o in ordenes)
+                # Obtener Algo Orders (donde están los SL desde V3.1)
+                algo_ordenes = client.futures_get_open_algo_orders()
+                # Filtrar por símbolo y tipo STOP_MARKET
+                tiene_sl = any(
+                    o.get('symbol') == symbol and o.get('type') == 'STOP_MARKET' 
+                    for o in algo_ordenes
+                )
                 
                 if not tiene_sl:
                     entry_price = float(pos['entryPrice'])
