@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V2.8 - Daily Summary + Resource Optimization + Guardian System
+# V3.2 - Dual SL Detection + IA Menos Conservadora (65%)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
