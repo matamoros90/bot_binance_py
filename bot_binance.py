@@ -2094,7 +2094,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V3.4 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V3.5 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
@@ -2110,7 +2110,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V3.4:*
+🆕 *FUNCIONES V3.5:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `15m, 30m, 1h, 4h`
@@ -2131,7 +2131,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V3.4...")
+log("🚀 Iniciando Bot Binance Futuros V3.5...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2260,7 +2260,7 @@ while True:
             mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
             if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V3.4... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V3.5... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
         
         time.sleep(MONITOREO_INTERVALO)
         
