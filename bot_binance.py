@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.4 - Fix Drawdown + SL Detection + Max 3 Posiciones
+# V3.5 - Monitoreo 30s + Anti-SHORT en Extreme Fear
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -30,7 +30,7 @@ MAX_POSICIONES = 3        # Máximo 3 posiciones simultáneas (V3.4: reducido pa
 # TRAILING STOP LOSS CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
 TRAILING_SL_PERCENT = 0.015  # 1.5% - distancia del trailing
-MONITOREO_INTERVALO = 60     # 60s (antes 30s) para reducir carga de CPU
+MONITOREO_INTERVALO = 30     # 30s - balance entre reacción rápida y recursos
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -142,7 +142,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.4 - FIX DRAWDOWN + SL + MAX 3 POS")
+            self.wfile.write(b"BINANCE BOT V3.5 - MONITOREO 30s + ANTI-SHORT EXTREME FEAR")
         def log_message(self, format, *args):
             pass
     try:
@@ -1924,14 +1924,16 @@ REGLAS V3.3 - TRADING OPORTUNISTA
 7. Precio en soporte + rebote → LONG
 8. Precio en banda inferior Bollinger → LONG
 
-⚡ REGLA ESPECIAL EXTREME FEAR (Fear < 20):
-- IGNORAR tendencia EMA bajista
-- PREFERIR LONG aunque EMA sea bajista
-- El mercado ya cayó mucho, es hora de COMPRAR
+⚡ REGLA CRÍTICA EXTREME FEAR (Fear < 20):
+- PROHIBIDO hacer SHORT cuando Fear & Greed < 20
+- OBLIGATORIO hacer LONG o WAIT (NUNCA SHORT)
+- IGNORAR señales técnicas bajistas (EMA, MACD)
+- El mercado en pánico SIEMPRE rebota → Aprovechar para COMPRAR
+- Los SHORTs en Extreme Fear son TRAMPAS (Short Squeeze)
 
-⚡ REGLA ESPECIAL TENDENCIA BAJISTA FUERTE:
-- Si EMA bajista + MACD negativo + Volumen alto → SHORT agresivo
-- Ganar dinero mientras el mercado cae
+⚡ REGLA SHORT SOLO SI Fear & Greed > 25:
+- Solo considerar SHORT cuando Fear > 25
+- Si Fear < 25: LONG o WAIT, NUNCA SHORT
 
 ❌ SOLO usar WAIT si:
 - Volumen < 0.5x (mercado sin movimiento)

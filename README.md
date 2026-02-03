@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.4                                   |
+| **Versión**    | V3.5                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -70,6 +70,13 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.5 (03/02/2026) - Monitoreo Rápido + Anti-SHORT Extreme Fear
+
+- ⚡ **Monitoreo 30s**: Reducido de 60s → **30s** (reacción 2x más rápida)
+- 🛡️ **Anti-SHORT Extreme Fear**: **PROHIBIDO** hacer SHORT cuando Fear & Greed < 20
+- 📈 **Lógica mejorada**: En Extreme Fear solo LONG o WAIT (nunca SHORT)
+- 🎯 **Objetivo**: Evitar ir en contra del rebote del mercado (Short Squeeze)
 
 ### V3.4 (01/02/2026) - Fix Críticos de Riesgo
 
