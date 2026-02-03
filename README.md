@@ -6,7 +6,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 01/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 03/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
@@ -23,7 +23,8 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 | 07/01 - 18/01 | $5,438.59       | $6,576.60      | +$1,138.01     | +20.92%     |
 | 18/01 - 23/01 | $6,576.60       | $6,307.20      | -$269.40       | -4.10%      |
 | 23/01 - 01/02 | $6,307.20       | $6,333.65      | +$26.45        | +0.42%      |
-| **TOTAL**     | $5,293.49       | **$6,333.65**  | **+$1,040.16** | **+19.65%** |
+| 01/02 - 03/02 | $6,333.65       | $6,363.59      | +$29.94        | +0.47%      |
+| **TOTAL**     | $5,293.49       | **$6,363.59**  | **+$1,070.10** | **+20.21%** |
 
 > [!NOTE]
 > Estos resultados son en TESTNET. El rendimiento real puede variar.
