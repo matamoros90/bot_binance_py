@@ -142,7 +142,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.5 - MONITOREO 30s + ANTI-SHORT EXTREME FEAR")
+            self.wfile.write(b"BINANCE BOT V3.6 - DRAWDOWN 8% + BALANCE METRIC CORREGIDA")
         def log_message(self, format, *args):
             pass
     try:
@@ -1730,7 +1730,7 @@ def enviar_resumen_semanal(client):
         # ═══════════════════════════════════════════════════════════════════
         # CONSTRUIR MENSAJE DE TELEGRAM
         # ═══════════════════════════════════════════════════════════════════
-        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V3.0*
+        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V3.6*
 📅 Fecha: {fecha_actual}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -1753,7 +1753,7 @@ def enviar_resumen_semanal(client):
 � *ROI Semanal:* `{roi_semanal:.2f}%`
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Bot Binance V3.0 Activo ✅"""
+🤖 Bot Binance V3.6 Activo ✅"""
         
         # Enviar mensaje por Telegram
         enviar_telegram(mensaje)
@@ -2096,7 +2096,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V3.5 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V3.6 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
@@ -2112,7 +2112,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V3.5:*
+🆕 *FUNCIONES V3.6:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `15m, 30m, 1h, 4h`
@@ -2133,7 +2133,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V3.5...")
+log("🚀 Iniciando Bot Binance Futuros V3.6...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2185,7 +2185,7 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V3.0 iniciado. Guardian System + Resumen Semanal + Weekly Summary activos...")
+log("✅ Bot V3.6 iniciado. Guardian System + Resumen Semanal + Weekly Summary activos...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN + RESUMEN SEMANAL
@@ -2262,7 +2262,7 @@ while True:
             mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
             if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V3.5... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V3.6... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
         
         time.sleep(MONITOREO_INTERVALO)
         
