@@ -22,9 +22,9 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Período               | Balance Inicial  | Balance Actual | Ganancia   | ROI     |
 | --------------------- | ---------------- | -------------- | ---------- | ------- |
-| 04/01 - 05/02         | $5,293.49 (Avbl) | $7,518.07      | +$2,224.58 | +42.03% |
+| 04/01 - 05/02         | $5,293.49 (Avbl) | $7,497.33      | +$2,203.84 | +41.63% |
 | **NUEVO INICIO V3.6** |                  |                |            |         |
-| 05/02 - actual        | **$7,518.07**    | **$7,518.07**  | $0.00      | 0.00%   |
+| 05/02 - actual        | **$7,497.33**    | **$7,497.33**  | $0.00      | 0.00%   |
 
 > [!NOTE]
 > A partir de V3.6 (05/02/2026), el balance se mide con `walletBalance` (Balance Total) para evitar fluctuaciones por margen bloqueado.
@@ -76,7 +76,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 - 📈 **Drawdown Máximo**: Aumentado de -3% → **-8%** temporalmente
 - 🔓 **Problema resuelto**: Bot atrapado en loop por pérdidas no realizadas
 - 📊 **Balance Metric**: Cambiado de `availableBalance` → `walletBalance` para ROI preciso
-- 💰 **Nuevo Balance Inicial**: $7,518.07 (wallet balance, no Avbl)
+- 💰 **Nuevo Balance Inicial**: $7,497.33 (wallet balance, no Avbl)
 - 🎯 **Próxima revisión**: Analizar mañana y ajustar drawdown si es necesario
 
 ### V3.5 (03/02/2026) - Monitoreo Rápido + Anti-SHORT Extreme Fear

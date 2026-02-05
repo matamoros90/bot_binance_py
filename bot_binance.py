@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.5 - Monitoreo 30s + Anti-SHORT en Extreme Fear
+# V3.6 - Drawdown 8% + Balance Metric Corregida
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -37,7 +37,7 @@ LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 # ESTADÍSTICAS SEMANALES (V3.0) - Resumen cada viernes a las 18:00
 # ═══════════════════════════════════════════════════════════════════════════════
 # Balance inicial del proyecto (04/01/2026) - usado para calcular ROI total
-BALANCE_INICIAL_PROYECTO = 5293.49
+BALANCE_INICIAL_PROYECTO = 7497.3267  # V3.6: Nuevo inicio con wallet balance
 
 # Diccionario para almacenar estadísticas semanales
 # - balance_inicio_semana: balance al inicio de la semana actual
