@@ -63,7 +63,7 @@ stats_semanales = {
 # Si las pérdidas del día superan este %, el bot pausa nuevos trades hasta mañana
 # Esto protege el capital en días malos y evita "tilt"
 # Ejemplo: Con -3%, si pierdes $189 de $6,307 en un día → pausa
-DRAWDOWN_MAXIMO_DIARIO = 0.03       # -3% máximo pérdida diaria
+DRAWDOWN_MAXIMO_DIARIO = 0.08       # -8% máximo pérdida diaria (V3.6: aumentado temporalmente)
 DRAWDOWN_ACTIVO = True              # Activar protección de drawdown
 
 # --- ATR PARA STOP LOSS DINÁMICO ---

@@ -6,11 +6,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 03/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 05/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.5                                   |
+| **Versión**    | V3.6                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -70,6 +70,13 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.6 (05/02/2026) - Drawdown Ajustado Temporalmente
+
+- 📈 **Drawdown Máximo**: Aumentado de -3% → **-8%** temporalmente
+- 🔓 **Problema resuelto**: Bot atrapado en loop por pérdidas no realizadas de posiciones abiertas
+- ⚠️ **Nota**: Este cambio es temporal para permitir recuperación del mercado
+- 🎯 **Próxima revisión**: Volver a -3% cuando las posiciones se estabilicen
 
 ### V3.5 (03/02/2026) - Monitoreo Rápido + Anti-SHORT Extreme Fear
 
