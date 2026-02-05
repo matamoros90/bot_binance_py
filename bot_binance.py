@@ -981,12 +981,14 @@ def obtener_velas(client, symbol, interval='1h', limit=200):
 # OBTENER BALANCE DE FUTUROS
 # ═══════════════════════════════════════════════════════════════════════════════
 def obtener_balance(client):
-    """Obtiene el balance disponible en USDT"""
+    """Obtiene el balance total (wallet balance) en USDT para ROI preciso"""
     try:
         balances = client.futures_account_balance()
         for b in balances:
             if b['asset'] == 'USDT':
-                return float(b['availableBalance'])
+                # V3.6: Usar 'balance' (wallet balance) en vez de 'availableBalance'
+                # Esto da un ROI más estable que no fluctúa con posiciones abiertas
+                return float(b['balance'])
         return 0
     except Exception as e:
         log(f"⚠️ Error obteniendo balance: {e}")

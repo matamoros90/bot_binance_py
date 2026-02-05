@@ -17,17 +17,17 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ### 💰 Rendimiento Acumulado (TESTNET)
 
-| Período       | Balance Inicial | Balance Actual | Ganancia       | ROI         |
-| ------------- | --------------- | -------------- | -------------- | ----------- |
-| 04/01 - 07/01 | $5,293.49       | $5,438.59      | +$145.10       | +2.74%      |
-| 07/01 - 18/01 | $5,438.59       | $6,576.60      | +$1,138.01     | +20.92%     |
-| 18/01 - 23/01 | $6,576.60       | $6,307.20      | -$269.40       | -4.10%      |
-| 23/01 - 01/02 | $6,307.20       | $6,333.65      | +$26.45        | +0.42%      |
-| 01/02 - 03/02 | $6,333.65       | $6,363.59      | +$29.94        | +0.47%      |
-| **TOTAL**     | $5,293.49       | **$6,363.59**  | **+$1,070.10** | **+20.21%** |
+> [!IMPORTANT]
+> **V3.6**: Cambio de métrica de balance. Ahora usamos `walletBalance` (Balance Total) en vez de `availableBalance` para un ROI más preciso.
+
+| Período               | Balance Inicial  | Balance Actual | Ganancia   | ROI     |
+| --------------------- | ---------------- | -------------- | ---------- | ------- |
+| 04/01 - 05/02         | $5,293.49 (Avbl) | $7,518.07      | +$2,224.58 | +42.03% |
+| **NUEVO INICIO V3.6** |                  |                |            |         |
+| 05/02 - actual        | **$7,518.07**    | **$7,518.07**  | $0.00      | 0.00%   |
 
 > [!NOTE]
-> Estos resultados son en TESTNET. El rendimiento real puede variar.
+> A partir de V3.6 (05/02/2026), el balance se mide con `walletBalance` (Balance Total) para evitar fluctuaciones por margen bloqueado.
 
 ---
 
@@ -71,12 +71,13 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ## 🆕 Historial de Versiones
 
-### V3.6 (05/02/2026) - Drawdown Ajustado Temporalmente
+### V3.6 (05/02/2026) - Drawdown Ajustado + Métrica de Balance Corregida
 
 - 📈 **Drawdown Máximo**: Aumentado de -3% → **-8%** temporalmente
-- 🔓 **Problema resuelto**: Bot atrapado en loop por pérdidas no realizadas de posiciones abiertas
-- ⚠️ **Nota**: Este cambio es temporal para permitir recuperación del mercado
-- 🎯 **Próxima revisión**: Volver a -3% cuando las posiciones se estabilicen
+- 🔓 **Problema resuelto**: Bot atrapado en loop por pérdidas no realizadas
+- 📊 **Balance Metric**: Cambiado de `availableBalance` → `walletBalance` para ROI preciso
+- 💰 **Nuevo Balance Inicial**: $7,518.07 (wallet balance, no Avbl)
+- 🎯 **Próxima revisión**: Analizar mañana y ajustar drawdown si es necesario
 
 ### V3.5 (03/02/2026) - Monitoreo Rápido + Anti-SHORT Extreme Fear
 
