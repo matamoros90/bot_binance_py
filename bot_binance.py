@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.7 - Fix ATR SL Mínimo + Retry API + Drawdown 5%
+# V3.8 - Fix SL Emergency + Post-IA Validation + Optimized ROI
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -110,10 +110,10 @@ TP_DINAMICO_DIAS = 3            # Después de 3 días, ajustar TP
 TP_DINAMICO_PERCENT = 0.02      # TP reducido a 2% después de X días
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SISTEMA GUARDIÁN V2.7 - PROTECCIÓN ABSOLUTA
+# SISTEMA GUARDIÁN V3.8 - PROTECCIÓN OPTIMIZADA
 # ═══════════════════════════════════════════════════════════════════════════════
 GUARDIAN_ACTIVO = True          # Activar sistema guardián
-MAX_PERDIDA_PERMITIDA = -0.10   # -10% cierre obligatorio de emergencia
+MAX_PERDIDA_PERMITIDA = -0.07   # V3.8: -7% cierre obligatorio (antes -10%)
 LOG_DETALLADO = True            # Logs completos, sin errores silenciosos
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -121,12 +121,12 @@ LOG_DETALLADO = True            # Logs completos, sin errores silenciosos
 # ═══════════════════════════════════════════════════════════════════════════════
 TEMPORALIDADES = ['15m', '30m', '1h', '4h']
 
-# TP/SL inicial por temporalidad (antes del trailing)
+# V3.8: TP/SL inicial por temporalidad (optimizado para +ROI)
 TP_SL_CONFIG = {
-    "15m": {"tp": 0.02, "sl": 0.01},     # +2%, -1%
-    "30m": {"tp": 0.03, "sl": 0.015},    # +3%, -1.5%
-    "1h":  {"tp": 0.05, "sl": 0.025},    # +5%, -2.5%
-    "4h":  {"tp": 0.08, "sl": 0.04},     # +8%, -4%
+    "15m": {"tp": 0.015, "sl": 0.008},    # +1.5%, -0.8% (scalping)
+    "30m": {"tp": 0.025, "sl": 0.012},    # +2.5%, -1.2%
+    "1h":  {"tp": 0.04, "sl": 0.02},      # +4%, -2% (principal)
+    "4h":  {"tp": 0.06, "sl": 0.03},      # +6%, -3%
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -143,7 +143,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.7 - FIX ATR SL + RETRY API + DRAWDOWN 5%")
+            self.wfile.write(b"BINANCE BOT V3.8 - FIX SL EMERGENCY + POST-IA VALIDATION")
         def log_message(self, format, *args):
             pass
     try:
@@ -1298,15 +1298,21 @@ def verificar_ordenes_sl_existen(client):
                     # Marcar como verificado
                     _sl_creados.add(symbol)
                 else:
-                    # Crear SL de emergencia
+                    # V3.8: Crear SL de emergencia usando MARK PRICE (no entry)
+                    # Esto evita error -2021 "Order would immediately trigger"
                     entry_price = float(pos['entryPrice'])
+                    mark_price = float(pos['markPrice'])
                     side = 'LONG' if cantidad > 0 else 'SHORT'
                     
+                    # V3.8: SL de emergencia basado en mark_price actual
+                    # Para evitar que el SL triggeree inmediatamente
                     if side == 'LONG':
-                        sl_precio = entry_price * (1 + MAX_PERDIDA_PERMITIDA)
+                        # LONG: SL está DEBAJO del precio actual
+                        sl_precio = mark_price * (1 - abs(MAX_PERDIDA_PERMITIDA))
                         sl_side = 'SELL'
                     else:
-                        sl_precio = entry_price * (1 - MAX_PERDIDA_PERMITIDA)
+                        # SHORT: SL está ARRIBA del precio actual
+                        sl_precio = mark_price * (1 + abs(MAX_PERDIDA_PERMITIDA))
                         sl_side = 'BUY'
                     
                     log(f"⚠️ {symbol} SIN orden SL. Creando SL de emergencia a ${sl_precio:.4f}")
@@ -1982,8 +1988,20 @@ JSON (solo esto, sin explicación adicional):
                 if not respuesta:
                     log(f"   ⚠️ No se pudo obtener respuesta de Gemini para {symbol}")
                     continue
+                
+                # V3.8: Validación robusta de JSON
+                try:
+                    respuesta_limpia = respuesta.replace("```json","").replace("```","").strip()
+                    data = json.loads(respuesta_limpia)
                     
-                data = json.loads(respuesta.replace("```json","").replace("```","").strip())
+                    # Validar campos requeridos
+                    if "ACCION" not in data or "CONFIANZA" not in data:
+                        log(f"   ⚠️ Respuesta IA incompleta, saltando {symbol}")
+                        continue
+                        
+                except json.JSONDecodeError as e:
+                    log(f"   ⚠️ JSON inválido de IA para {symbol}, saltando")
+                    continue
                 
                 accion = data.get('ACCION', 'WAIT')
                 confianza = float(data.get('CONFIANZA', 0))
@@ -1997,6 +2015,26 @@ JSON (solo esto, sin explicación adicional):
                 # Validar temporalidad
                 if temporalidad not in TEMPORALIDADES:
                     temporalidad = '1h'
+                
+                # ═══════════════════════════════════════════════════════════════════
+                # V3.8: VALIDACIÓN POST-IA - Reglas que el código DEBE hacer cumplir
+                # La IA puede ignorar reglas, pero el código las fuerza
+                # ═══════════════════════════════════════════════════════════════════
+                
+                # REGLA CRÍTICA: NO SHORT en Extreme Fear (Fear < 25)
+                if fg_valor < 25 and accion == "SHORT":
+                    log(f"   ⛔ REGLA FORZADA: SHORT rechazado en Extreme Fear (F&G={fg_valor})")
+                    accion = "WAIT"
+                    razon = f"SHORT rechazado: Fear & Greed {fg_valor} < 25 (Extreme Fear)"
+                    confianza = 0  # Forzar a no operar
+                
+                # VALIDACIÓN COHERENCIA: RSI vs Acción
+                if accion == "LONG" and indicadores['rsi'] > 75:
+                    log(f"   ⚠️ Coherencia: LONG con RSI={indicadores['rsi']:.0f} (sobrecompra)")
+                    confianza *= 0.7  # Reducir 30% la confianza
+                elif accion == "SHORT" and indicadores['rsi'] < 25:
+                    log(f"   ⚠️ Coherencia: SHORT con RSI={indicadores['rsi']:.0f} (sobreventa)")
+                    confianza *= 0.7  # Reducir 30% la confianza
                 
                 conf_pct = int(confianza * 100)
                 log(f"   📊 IA: {accion} | Confianza: {conf_pct}% | Temp: {temporalidad}")
@@ -2122,7 +2160,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V3.6 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V3.8 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
