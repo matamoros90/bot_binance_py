@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V3.0 - Resumen Semanal + Optimización + IA
+# 🤖 Bot Binance Futures V3.7 - Fix ATR SL + Retry API + Optimización
 
 ## 📋 Descripción
 
@@ -6,11 +6,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 05/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 09/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.6                                   |
+| **Versión**    | V3.7                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -18,16 +18,16 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ### 💰 Rendimiento Acumulado (TESTNET)
 
 > [!IMPORTANT]
-> **V3.6**: Cambio de métrica de balance. Ahora usamos `walletBalance` (Balance Total) en vez de `availableBalance` para un ROI más preciso.
+> **V3.7**: Nuevo inicio desde $4,524.29 después de análisis de pérdidas y fixes críticos.
 
-| Período               | Balance Inicial  | Balance Actual | Ganancia   | ROI     |
-| --------------------- | ---------------- | -------------- | ---------- | ------- |
-| 04/01 - 05/02         | $5,293.49 (Avbl) | $7,497.33      | +$2,203.84 | +41.63% |
-| **NUEVO INICIO V3.6** |                  |                |            |         |
-| 05/02 - actual        | **$7,497.33**    | **$7,497.33**  | $0.00      | 0.00%   |
+| Período               | Balance Inicial | Balance Actual | Ganancia | ROI     |
+| --------------------- | --------------- | -------------- | -------- | ------- |
+| 04/01 - 09/02         | $5,293.49       | $4,524.29      | -$769.20 | -14.53% |
+| **NUEVO INICIO V3.7** |                 |                |          |         |
+| 09/02 - actual        | **$4,524.29**   | **$4,524.29**  | $0.00    | 0.00%   |
 
 > [!NOTE]
-> A partir de V3.6 (05/02/2026), el balance se mide con `walletBalance` (Balance Total) para evitar fluctuaciones por margen bloqueado.
+> V3.7 incluye fixes críticos para evitar pérdidas por SL demasiado cercanos y errores de API.
 
 ---
 
@@ -60,7 +60,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 | Feature                   | Descripción                | Beneficio          |
 | ------------------------- | -------------------------- | ------------------ |
 | Position Sizing por Kelly | % óptimo según win-rate    | Maximiza compuesto |
-| Drawdown máximo diario    | -3% máximo, pausar bot     | Protege capital    |
+| Drawdown máximo diario    | -5% máximo, pausar bot     | Protege capital    |
 | Correlación de posiciones | No abrir 3 correlacionadas | Diversifica riesgo |
 | Win-rate tracking         | Si < 50%, reducir riesgo   | Auto-ajuste        |
 
@@ -70,6 +70,15 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.7 (09/02/2026) - Fix ATR SL Mínimo + Retry API + Optimización
+
+- 🔧 **Fix ATR SL Mínimo**: SL mínimo de 1.5% aunque ATR sea muy bajo (evita SL a 0.15%)
+- ⚡ **Retry API Gemini**: Reintentos con backoff exponencial para errores 429
+- 📉 **Drawdown Reducido**: De -8% → **-5%** para mayor protección
+- 🎯 **Confianza Aumentada**: De 65% → **70%** para mayor selectividad
+- 💰 **Nuevo Balance Inicial**: $4,524.29 (reinicio después de análisis de pérdidas)
+- 📊 **ATR Multiplicador**: Aumentado de 1.5x → **2.0x** para SL más conservador
 
 ### V3.6 (05/02/2026) - Drawdown Ajustado + Métrica de Balance Corregida
 

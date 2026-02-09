@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.6 - Drawdown 8% + Balance Metric Corregida
+# V3.7 - Fix ATR SL Mínimo + Retry API + Drawdown 5%
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -17,7 +17,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-CONFIANZA_MINIMA = 0.65   # 65% - Permitir más operaciones (antes 70%)
+CONFIANZA_MINIMA = 0.70   # 70% - V3.7: Aumentado para mayor selectividad
 ESCUDO_TRABAJO = 0.80     # 80% del balance disponible para trading
 ESCUDO_SEGURO = 0.20      # 20% protegido
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -37,7 +37,7 @@ LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 # ESTADÍSTICAS SEMANALES (V3.0) - Resumen cada viernes a las 18:00
 # ═══════════════════════════════════════════════════════════════════════════════
 # Balance inicial del proyecto (04/01/2026) - usado para calcular ROI total
-BALANCE_INICIAL_PROYECTO = 7497.3267  # V3.6: Nuevo inicio con wallet balance
+BALANCE_INICIAL_PROYECTO = 4524.29  # V3.7: Nuevo inicio desde balance actual (09/02/2026)
 
 # Diccionario para almacenar estadísticas semanales
 # - balance_inicio_semana: balance al inicio de la semana actual
@@ -63,7 +63,7 @@ stats_semanales = {
 # Si las pérdidas del día superan este %, el bot pausa nuevos trades hasta mañana
 # Esto protege el capital en días malos y evita "tilt"
 # Ejemplo: Con -3%, si pierdes $189 de $6,307 en un día → pausa
-DRAWDOWN_MAXIMO_DIARIO = 0.08       # -8% máximo pérdida diaria (V3.6: aumentado temporalmente)
+DRAWDOWN_MAXIMO_DIARIO = 0.05       # -5% máximo pérdida diaria (V3.7: reducido para protección)
 DRAWDOWN_ACTIVO = True              # Activar protección de drawdown
 
 # --- ATR PARA STOP LOSS DINÁMICO ---
@@ -74,7 +74,8 @@ DRAWDOWN_ACTIVO = True              # Activar protección de drawdown
 #   - 1.5x ATR: Balanceado (recomendado)
 #   - 2.0x ATR: Conservador (stop amplio, menos stops pero más pérdida por stop)
 ATR_SL_ACTIVO = True                # Usar ATR para calcular SL dinámico
-ATR_SL_MULTIPLICADOR = 1.5          # SL = Precio - (1.5 * ATR)
+ATR_SL_MULTIPLICADOR = 2.0          # SL = Precio - (2.0 * ATR) - V3.7: aumentado para evitar SL prematuros
+ATR_SL_MINIMO_PERCENT = 0.015       # V3.7: SL mínimo 1.5% aunque ATR sea muy bajo
 
 # --- KELLY CRITERION PARA POSITION SIZING ---
 # Fórmula de Kelly: f* = (p * b - q) / b
@@ -142,7 +143,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.6 - DRAWDOWN 8% + BALANCE METRIC CORREGIDA")
+            self.wfile.write(b"BINANCE BOT V3.7 - FIX ATR SL + RETRY API + DRAWDOWN 5%")
         def log_message(self, format, *args):
             pass
     try:
@@ -736,6 +737,9 @@ def calcular_sl_atr(precio_actual, atr, side):
     """
     Calcula el Stop Loss dinámico basado en ATR (Average True Range).
     
+    V3.7: Ahora usa un SL MÍNIMO de 1.5% para evitar SL demasiado cercanos
+    en activos de baja volatilidad (como VOXELUSDT).
+    
     El ATR representa la volatilidad real del mercado. Un SL basado en ATR
     se adapta automáticamente a las condiciones actuales:
     - Alta volatilidad → SL más amplio (evita stops innecesarios)
@@ -750,12 +754,8 @@ def calcular_sl_atr(precio_actual, atr, side):
         float: Precio del Stop Loss
     
     Fórmula:
-        LONG:  SL = Precio - (ATR * multiplicador)
-        SHORT: SL = Precio + (ATR * multiplicador)
-    
-    Ejemplo con ATR = $50, multiplicador 1.5:
-        - LONG @ $1000: SL = $1000 - $75 = $925
-        - SHORT @ $1000: SL = $1000 + $75 = $1075
+        LONG:  SL = max(Precio - ATR*mult, Precio * 0.985)
+        SHORT: SL = min(Precio + ATR*mult, Precio * 1.015)
     """
     if not ATR_SL_ACTIVO or atr <= 0:
         # Fallback: usar SL fijo del 2.5%
@@ -765,7 +765,13 @@ def calcular_sl_atr(precio_actual, atr, side):
             return precio_actual * 1.025  # +2.5%
     
     # Calcular distancia del SL basada en ATR
-    distancia_sl = atr * ATR_SL_MULTIPLICADOR
+    distancia_sl_atr = atr * ATR_SL_MULTIPLICADOR
+    
+    # V3.7: Calcular SL mínimo basado en porcentaje (para evitar SL muy cercanos)
+    distancia_sl_minima = precio_actual * ATR_SL_MINIMO_PERCENT
+    
+    # Usar la distancia mayor entre ATR y el mínimo
+    distancia_sl = max(distancia_sl_atr, distancia_sl_minima)
     
     if side == 'BUY':  # LONG
         sl_precio = precio_actual - distancia_sl
@@ -773,6 +779,7 @@ def calcular_sl_atr(precio_actual, atr, side):
         sl_precio = precio_actual + distancia_sl
     
     return round(sl_precio, 4)
+
 
 
 def calcular_kelly(saldo_disponible, confianza_ia):
@@ -1951,12 +1958,31 @@ TEMPORALIDADES:
 JSON (solo esto, sin explicación adicional):
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve con indicadores clave"}}"""
                 
-                # Llamada al nuevo SDK google-genai
-                response = gemini_client.models.generate_content(
-                    model='gemini-2.0-flash',
-                    contents=prompt
-                )
-                respuesta = response.text
+                # V3.7: Retry logic con exponential backoff para errores 429
+                MAX_RETRIES = 3
+                respuesta = None
+                for attempt in range(MAX_RETRIES):
+                    try:
+                        response = gemini_client.models.generate_content(
+                            model='gemini-2.0-flash',
+                            contents=prompt
+                        )
+                        respuesta = response.text
+                        break
+                    except Exception as api_error:
+                        error_str = str(api_error)
+                        if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
+                            if attempt < MAX_RETRIES - 1:
+                                wait_time = 15 * (attempt + 1)  # 15s, 30s, 45s
+                                log(f"   ⏳ API limit alcanzado, esperando {wait_time}s...")
+                                time.sleep(wait_time)
+                                continue
+                        raise api_error
+                
+                if not respuesta:
+                    log(f"   ⚠️ No se pudo obtener respuesta de Gemini para {symbol}")
+                    continue
+                    
                 data = json.loads(respuesta.replace("```json","").replace("```","").strip())
                 
                 accion = data.get('ACCION', 'WAIT')
