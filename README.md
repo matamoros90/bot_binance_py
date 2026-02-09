@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V3.7 - Fix ATR SL + Retry API + Optimización
+# 🤖 Bot Binance Futures V3.8 - Fix SL Emergency + Post-IA Validation
 
 ## 📋 Descripción
 
@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.7                                   |
+| **Versión**    | V3.8                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -70,6 +70,19 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.8 (09/02/2026) - Fix SL Emergency + Post-IA Validation + Optimized ROI
+
+> [!IMPORTANT]
+> **Corrección crítica**: Eliminado error -2021 que impedía crear SL de emergencia.
+
+- 🔧 **Fix SL Emergencia**: Ahora usa `mark_price` en lugar de `entry_price` (evita -2021)
+- ⛔ **Validación Post-IA**: Bloquea SHORT automáticamente si Fear & Greed < 25
+- 🛡️ **JSON Safety**: Validación robusta, no crashea si IA devuelve JSON mal formado
+- 🎯 **Coherencia RSI**: Reduce confianza 30% si IA dice LONG con RSI > 75 o SHORT con RSI < 25
+- 🚨 **Guardian Optimizado**: Reducido de -10% → **-7%** para cortar pérdidas más rápido
+- 📈 **TP/SL Optimizado**: TP más rápido, SL más tight para mejor ratio riesgo/recompensa
+  - 15m: +1.5%/-0.8% | 30m: +2.5%/-1.2% | 1h: +4%/-2% | 4h: +6%/-3%
 
 ### V3.7 (09/02/2026) - Fix ATR SL Mínimo + Retry API + Optimización
 
@@ -204,9 +217,9 @@ MAX_POSICIONES = 5           # Máximo 5 posiciones (V3.0: 24/01 - diversificaci
 TRAILING_SL_PERCENT = 0.015  # 1.5% trailing
 MONITOREO_INTERVALO = 60     # 60 segundos (Optimizado V2.8)
 
-# Guardian System V2.7
+# Guardian System V3.8
 GUARDIAN_ACTIVO = True       # Protección de emergencia
-MAX_PERDIDA_PERMITIDA = -0.10  # -10% cierre obligatorio
+MAX_PERDIDA_PERMITIDA = -0.07  # V3.8: -7% cierre obligatorio (antes -10%)
 
 # Funding Fees Protection (V2.5+)
 FUNDING_PROTECTION = True    # Activar protección
@@ -215,14 +228,14 @@ TP_DINAMICO_DIAS = 3         # Ajustar TP después de 3 días
 TP_DINAMICO_PERCENT = 0.02   # TP reducido a 2%
 ```
 
-## 📊 TP/SL por Temporalidad
+## 📊 TP/SL por Temporalidad (V3.8 Optimizado)
 
 | Temporalidad | Take Profit | Stop Loss |
 | ------------ | ----------- | --------- |
-| 15m          | +2%         | -1%       |
-| 30m          | +3%         | -1.5%     |
-| 1h           | +5%         | -2.5%     |
-| 4h           | +8%         | -4%       |
+| 15m          | +1.5%       | -0.8%     |
+| 30m          | +2.5%       | -1.2%     |
+| 1h           | +4%         | -2%       |
+| 4h           | +6%         | -3%       |
 
 ## 🎭 Fear & Greed Index
 
