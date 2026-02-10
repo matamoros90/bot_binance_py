@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.8 - Fix SL Emergency + Post-IA Validation + Optimized ROI
+# V3.9 - SL Coherence + TTL Cache + Position Logging + Fix SL Emergency
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -143,7 +143,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.8 - FIX SL EMERGENCY + POST-IA VALIDATION")
+            self.wfile.write(b"BINANCE BOT V3.9 - SL COHERENCE + TTL CACHE + POSITION LOGGING")
         def log_message(self, format, *args):
             pass
     try:
@@ -1059,7 +1059,12 @@ def cancelar_ordenes_sl(client, symbol):
             log(f"⚠️ Error cancelando órdenes SL de {symbol}: {e}")
 
 def crear_orden_sl(client, symbol, side, precio, cantidad):
-    """Crea una nueva orden Stop Loss usando Algo Order API (Binance Dic 2025+)"""
+    """Crea una nueva orden Stop Loss usando Algo Order API (Binance Dic 2025+)
+    Returns: tuple (success: bool, already_protected: bool)
+        - (True, False): SL creado exitosamente
+        - (False, True): Error -4045, ya hay protección SL existente
+        - (False, False): Error real, SL NO fue creado
+    """
     try:
         # Obtener precisión del precio
         info = client.futures_exchange_info()
@@ -1076,16 +1081,16 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             triggerPrice=str(precio),
             quantity=str(cantidad)
         )
-        return True
+        return True, False
     except Exception as e:
         error_str = str(e)
         # V3.1.3: Silenciar error -4045 (max stop order limit)
         # Este error indica que YA HAY suficientes SL, lo cual es bueno
         if '-4045' in error_str:
             # No loguear - simplemente hay demasiados SL (protección OK)
-            return False
+            return False, True  # already_protected = True
         log(f"⚠️ Error creando SL: {e}")
-        return False
+        return False, False  # Error real, SL no existe
 
 def actualizar_trailing_sl(client):
     """Monitorea posiciones y actualiza SL con trailing 1.5%"""
@@ -1129,7 +1134,8 @@ def actualizar_trailing_sl(client):
                     # Solo actualizar SL si es mejor que el anterior y está en ganancia
                     if nuevo_sl > tracking['entry'] and (tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']):
                         cancelar_ordenes_sl(client, symbol)
-                        if crear_orden_sl(client, symbol, 'SELL', nuevo_sl, abs(cantidad)):
+                        success, _ = crear_orden_sl(client, symbol, 'SELL', nuevo_sl, abs(cantidad))
+                        if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((nuevo_sl - entry_price) / entry_price) * 100
                             log(f"📈 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} (+{ganancia_pct:.2f}% asegurado)")
@@ -1141,7 +1147,8 @@ def actualizar_trailing_sl(client):
                     
                     if nuevo_sl < tracking['entry'] and (tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']):
                         cancelar_ordenes_sl(client, symbol)
-                        if crear_orden_sl(client, symbol, 'BUY', nuevo_sl, abs(cantidad)):
+                        success, _ = crear_orden_sl(client, symbol, 'BUY', nuevo_sl, abs(cantidad))
+                        if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((entry_price - nuevo_sl) / entry_price) * 100
                             log(f"📉 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} (+{ganancia_pct:.2f}% asegurado)")
@@ -1228,19 +1235,70 @@ def guardian_posiciones(client):
         log(f"⚠️ Error en Guardián: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# V3.9: LOG RESUMEN DE POSICIONES ACTIVAS
+# ═══════════════════════════════════════════════════════════════════════════════
+def log_resumen_posiciones(client):
+    """V3.9: Muestra un resumen claro de todas las posiciones activas con PNL y estado SL"""
+    try:
+        positions = client.futures_position_information()
+        activas = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
+        
+        if not activas:
+            return
+        
+        log(f"📋 ═══ RESUMEN POSICIONES ({len(activas)}/{MAX_POSICIONES}) ═══")
+        
+        pnl_total = 0
+        for pos in activas:
+            symbol = pos['symbol']
+            cantidad = float(pos['positionAmt'])
+            entry = float(pos['entryPrice'])
+            mark = float(pos['markPrice'])
+            pnl = float(pos.get('unRealizedProfit', 0))
+            pnl_total += pnl
+            
+            side = 'LONG' if cantidad > 0 else 'SHORT'
+            
+            # Calcular ROI %
+            if entry > 0:
+                if cantidad > 0:
+                    roi = ((mark - entry) / entry) * 100
+                else:
+                    roi = ((entry - mark) / entry) * 100
+            else:
+                roi = 0
+            
+            estado = "🟢" if pnl >= 0 else "🔴"
+            
+            # Verificar SL rápido (sin API calls extra, usar _sl_verificados)
+            sl_status = "✅" if ('_sl_verificados' in globals() and symbol in _sl_verificados) else "❓"
+            
+            log(f"   {estado} {symbol} {side}: ROI {roi:+.2f}% (${pnl:+.2f}) | SL: {sl_status}")
+        
+        log(f"   💰 PNL Total No Realizado: ${pnl_total:+.2f}")
+        log(f"📋 ═══════════════════════════════════════════")
+        
+    except Exception as e:
+        log(f"⚠️ Error en resumen posiciones: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # VERIFICAR QUE EXISTAN ÓRDENES SL EN BINANCE
 # ═══════════════════════════════════════════════════════════════════════════════
 def verificar_ordenes_sl_existen(client):
     """
-    V3.4: Verifica que cada posición tenga una orden SL activa. Si no, la crea.
-    Usa set global para trackear SLs ya creados y evitar spam de logs.
+    V3.9: Verifica que cada posición tenga una orden SL activa y COHERENTE.
+    Mejoras sobre V3.4:
+    - Cache con TTL de 5 minutos (antes era permanente)
+    - Validación de coherencia: SL debe estar del lado correcto
+    - No marca como verificado si la creación falla
     """
-    global _sl_creados  # Track de SLs ya verificados/creados
+    global _sl_verificados  # dict: {symbol: timestamp}
     
-    # Inicializar set si no existe
-    if '_sl_creados' not in globals():
-        global _sl_creados
-        _sl_creados = set()
+    SL_VERIFICACION_TTL = 300  # Re-verificar cada 5 minutos
+    
+    # Inicializar dict si no existe
+    if '_sl_verificados' not in globals():
+        _sl_verificados = {}
     
     try:
         positions = client.futures_position_information()
@@ -1251,31 +1309,35 @@ def verificar_ordenes_sl_existen(client):
             
             if cantidad == 0:
                 # Si la posición se cerró, quitar del tracking
-                if symbol in _sl_creados:
-                    _sl_creados.discard(symbol)
+                _sl_verificados.pop(symbol, None)
                 continue
             
-            # Si ya verificamos/creamos SL para este symbol, no repetir
-            if symbol in _sl_creados:
-                continue
+            # V3.9: Re-verificar si han pasado más de 5 minutos (TTL)
+            if symbol in _sl_verificados:
+                if time.time() - _sl_verificados[symbol] < SL_VERIFICACION_TTL:
+                    continue
             
-            # V3.4: Verificar SL en AMBOS endpoints con búsqueda más amplia
+            entry_price = float(pos['entryPrice'])
+            mark_price = float(pos['markPrice'])
+            side = 'LONG' if cantidad > 0 else 'SHORT'
+            
+            # V3.9: Verificar SL en AMBOS endpoints con búsqueda más amplia
             try:
                 tiene_sl = False
+                sl_precio_encontrado = None
                 
                 # 1. Buscar en Algo Orders
                 try:
                     algo_ordenes = client.futures_get_open_algo_orders()
                     if algo_ordenes:
-                        tiene_sl = any(
-                            o.get('symbol') == symbol and (
+                        for o in algo_ordenes:
+                            if o.get('symbol') == symbol and (
                                 o.get('type') in ['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_MARKET'] or
-                                'stop' in o.get('type', '').lower() or
-                                o.get('stopPrice') or 
-                                o.get('triggerPrice')
-                            )
-                            for o in algo_ordenes
-                        )
+                                'stop' in o.get('type', '').lower()
+                            ):
+                                tiene_sl = True
+                                sl_precio_encontrado = float(o.get('triggerPrice', 0) or o.get('stopPrice', 0) or 0)
+                                break
                 except Exception:
                     pass
                 
@@ -1284,49 +1346,61 @@ def verificar_ordenes_sl_existen(client):
                     try:
                         ordenes_tradicionales = client.futures_get_open_orders(symbol=symbol)
                         if ordenes_tradicionales:
-                            tiene_sl = any(
-                                o.get('type') in ['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_MARKET'] or
-                                'stop' in o.get('type', '').lower() or
-                                o.get('stopPrice') or
-                                o.get('triggerPrice')
-                                for o in ordenes_tradicionales
-                            )
+                            for o in ordenes_tradicionales:
+                                if (o.get('type') in ['STOP_MARKET', 'STOP', 'STOP_LOSS', 'STOP_LOSS_MARKET'] or
+                                    'stop' in o.get('type', '').lower()):
+                                    tiene_sl = True
+                                    sl_precio_encontrado = float(o.get('stopPrice', 0) or o.get('triggerPrice', 0) or 0)
+                                    break
                     except Exception:
                         pass
                 
-                if tiene_sl:
-                    # Marcar como verificado
-                    _sl_creados.add(symbol)
-                else:
-                    # V3.8: Crear SL de emergencia usando MARK PRICE (no entry)
-                    # Esto evita error -2021 "Order would immediately trigger"
-                    entry_price = float(pos['entryPrice'])
-                    mark_price = float(pos['markPrice'])
-                    side = 'LONG' if cantidad > 0 else 'SHORT'
+                if tiene_sl and sl_precio_encontrado and sl_precio_encontrado > 0:
+                    # V3.9: VALIDAR COHERENCIA del SL
+                    sl_coherente = True
+                    if side == 'LONG' and sl_precio_encontrado > entry_price * 1.01:
+                        # SL de un LONG está ARRIBA del entry → INCOHERENTE
+                        log(f"⛔ {symbol} LONG: SL en ${sl_precio_encontrado:.2f} está ARRIBA del entry ${entry_price:.2f} → INCOHERENTE")
+                        sl_coherente = False
+                    elif side == 'SHORT' and sl_precio_encontrado < entry_price * 0.99:
+                        # SL de un SHORT está DEBAJO del entry → INCOHERENTE
+                        log(f"⛔ {symbol} SHORT: SL en ${sl_precio_encontrado:.2f} está DEBAJO del entry ${entry_price:.2f} → INCOHERENTE")
+                        sl_coherente = False
                     
-                    # V3.8: SL de emergencia basado en mark_price actual
-                    # Para evitar que el SL triggeree inmediatamente
+                    if sl_coherente:
+                        _sl_verificados[symbol] = time.time()
+                    else:
+                        # Cancelar SL incoherente y crear uno nuevo
+                        log(f"🔄 Cancelando SL incoherente de {symbol} y recreando...")
+                        cancelar_ordenes_sl(client, symbol)
+                        tiene_sl = False  # Forzar creación de nuevo SL
+                
+                if not tiene_sl:
+                    # V3.9: Crear SL de emergencia usando MARK PRICE
                     if side == 'LONG':
-                        # LONG: SL está DEBAJO del precio actual
                         sl_precio = mark_price * (1 - abs(MAX_PERDIDA_PERMITIDA))
                         sl_side = 'SELL'
                     else:
-                        # SHORT: SL está ARRIBA del precio actual
                         sl_precio = mark_price * (1 + abs(MAX_PERDIDA_PERMITIDA))
                         sl_side = 'BUY'
                     
-                    log(f"⚠️ {symbol} SIN orden SL. Creando SL de emergencia a ${sl_precio:.4f}")
+                    log(f"⚠️ {symbol} SIN orden SL válida. Creando SL de emergencia a ${sl_precio:.4f}")
                     
-                    if crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad)):
+                    success, already_protected = crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad))
+                    
+                    if success:
                         log(f"✅ SL de emergencia creado para {symbol}")
-                        _sl_creados.add(symbol)  # Marcar como creado
+                        _sl_verificados[symbol] = time.time()
+                    elif already_protected:
+                        # Error -4045: ya hay suficientes SL (protección OK)
+                        _sl_verificados[symbol] = time.time()
                     else:
-                        # Si falla por -4045 o cualquier razón, asumir que ya existe
-                        _sl_creados.add(symbol)
+                        # V3.9: Error real → NO marcar como verificado
+                        # Se reintentará en el próximo ciclo
+                        log(f"⛔ SL NO CREADO para {symbol}. Se reintentará en 30s.")
                     
             except Exception as e:
-                if LOG_DETALLADO:
-                    log(f"⚠️ Error verificando SL de {symbol}: {e}")
+                log(f"⚠️ Error verificando SL de {symbol}: {e}")
                     
     except Exception as e:
         log(f"⚠️ Error en verificar_ordenes_sl_existen: {e}")
@@ -1582,7 +1656,8 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
                     closePosition=True
                 )
                 log(f"   📈 TP configurado: ${tp}")
-            except: pass
+            except Exception as e:
+                log(f"   ⚠️ Error creando TP: {e}")
             
             # Stop Loss inicial (será reemplazado por trailing)
             try:
@@ -1596,7 +1671,25 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
                     closePosition=True
                 )
                 log(f"   📉 SL inicial: ${sl} (Trailing activo)")
-            except: pass
+            except Exception as e:
+                log(f"   ⛔ ERROR CRÍTICO: SL inicial no creado para {symbol}: {e}")
+                # V3.9: Reintentar SL con mark_price actual como fallback
+                try:
+                    mark_info = client.futures_position_information(symbol=symbol)
+                    if mark_info:
+                        mk_price = float(mark_info[0]['markPrice'])
+                        if side == 'BUY':  # LONG
+                            sl_retry = mk_price * (1 - 0.07)
+                        else:  # SHORT
+                            sl_retry = mk_price * (1 + 0.07)
+                        sl_side = 'SELL' if side == 'BUY' else 'BUY'
+                        success, _ = crear_orden_sl(client, symbol, sl_side, sl_retry, cantidad)
+                        if success:
+                            log(f"   ✅ SL de emergencia creado en retry: ${sl_retry:.4f}")
+                        else:
+                            log(f"   ⛔ SL NO CREADO para {symbol}. Guardian será protección.")
+                except Exception as e2:
+                    log(f"   ⛔ SL NO CREADO para {symbol} (retry falló: {e2}). Guardian será protección.")
         
         return True, order_id
         
@@ -1743,7 +1836,7 @@ def enviar_resumen_semanal(client):
         # ═══════════════════════════════════════════════════════════════════
         # CONSTRUIR MENSAJE DE TELEGRAM
         # ═══════════════════════════════════════════════════════════════════
-        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V3.6*
+        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V3.9*
 📅 Fecha: {fecha_actual}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -1766,7 +1859,7 @@ def enviar_resumen_semanal(client):
 � *ROI Semanal:* `{roi_semanal:.2f}%`
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Bot Binance V3.6 Activo ✅"""
+🤖 Bot Binance V3.9 Activo ✅"""
         
         # Enviar mensaje por Telegram
         enviar_telegram(mensaje)
@@ -2160,7 +2253,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V3.8 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V3.9 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
@@ -2176,7 +2269,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V3.6:*
+🆕 *FUNCIONES V3.9:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `15m, 30m, 1h, 4h`
@@ -2197,7 +2290,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V3.6...")
+log("🚀 Iniciando Bot Binance Futuros V3.9...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2249,7 +2342,7 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V3.6 iniciado. Guardian System + Resumen Semanal + Weekly Summary activos...")
+log("✅ Bot V3.9 iniciado. Guardian System + SL Coherence + Resumen Semanal activos...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN + RESUMEN SEMANAL
@@ -2317,7 +2410,12 @@ while True:
         # Cada N ciclos, hacer análisis completo de mercado
         if ciclo_analisis >= CICLOS_PARA_ANALISIS:
             if puede_operar:
-                ejecutar_trading(client, gemini_client)
+                # V3.9: Solo entrar a ejecutar_trading si hay espacios disponibles
+                pos_activas = contar_posiciones_abiertas(client)
+                if pos_activas < MAX_POSICIONES:
+                    ejecutar_trading(client, gemini_client)
+                else:
+                    log(f"📊 {pos_activas}/{MAX_POSICIONES} posiciones activas. Sin análisis IA.")
             else:
                 log("⏸️ Trading pausado por protección de drawdown diario")
             ciclo_analisis = 0
@@ -2326,7 +2424,10 @@ while True:
             mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
             if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V3.6... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V3.9... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                # V3.9: Resumen detallado de posiciones cada ~5 min
+                if pos_abiertas > 0:
+                    log_resumen_posiciones(client)
         
         time.sleep(MONITOREO_INTERVALO)
         

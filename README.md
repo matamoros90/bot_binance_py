@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V3.8 - Fix SL Emergency + Post-IA Validation
+# 🤖 Bot Binance Futures V3.9 - SL Coherence + TTL Cache + Position Logging
 
 ## 📋 Descripción
 
@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.8                                   |
+| **Versión**    | V3.9                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -70,6 +70,18 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V3.9 (10/02/2026) - SL Coherence + TTL Cache + Position Logging
+
+> [!IMPORTANT]
+> **Corrección crítica**: Posiciones podían quedar sin Stop Loss válido indefinidamente.
+
+- ⛔ **Fix `except: pass`**: `ejecutar_orden()` ya no silencia errores de SL. Ahora logea y reintenta con `mark_price`
+- 🔄 **SL Cache con TTL**: `_sl_creados` (set permanente) → `_sl_verificados` (dict con TTL 5 min). Re-verifica periódicamente
+- 🛡️ **SL Coherencia**: Valida que SL esté del lado correcto (debajo para LONG, arriba para SHORT). Cancela y recrea si es incoherente
+- 🔧 **`crear_orden_sl()`**: Retorna tupla `(success, already_protected)` para diferenciar "-4045" de errores reales
+- 📋 **Resumen Posiciones**: Nueva función `log_resumen_posiciones()` muestra PNL y estado SL cada ~5 min
+- ⚡ **Main Loop Optimizado**: No entra a `ejecutar_trading()` si posiciones están llenas (ahorra 4 llamadas API/ciclo)
 
 ### V3.8 (09/02/2026) - Fix SL Emergency + Post-IA Validation + Optimized ROI
 
