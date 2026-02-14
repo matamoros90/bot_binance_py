@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V3.9 - SL Coherence + TTL Cache + Position Logging
+# 🤖 Bot Binance Futures V4.0 - Fix TP Preservation + SL Optimizado + Guardian Full
 
 ## 📋 Descripción
 
@@ -6,11 +6,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 09/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 13/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V3.9                                   |
+| **Versión**    | V4.0                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -70,6 +70,20 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 ---
 
 ## 🆕 Historial de Versiones
+
+### V4.0 (13/02/2026) - Fix TP Preservation + SL Optimizado + Guardian Full + Trailing Fix
+
+> [!CAUTION]
+> **7 causas raíz de pérdidas identificadas y corregidas.** Fix crítico: TP se destruían al actualizar trailing SL.
+
+- ⛔ **Fix TP Preservation**: `cancelar_ordenes_sl()` ya NO cancela `TAKE_PROFIT_MARKET` (antes los destruía)
+- 🛡️ **SL Emergencia -3%**: Reducido de -7% → **-3%** (con x3 = -9% real vs -21% anterior). Guardian mantiene -7% como red final
+- 👁️ **Guardian Full Logging**: Ahora logea **TODAS** las posiciones activas (antes solo >5% PNL)
+- 📈 **Trailing SL Mejorado**: Se activa con ganancia > 0.5% (antes requería SL > entry price, casi nunca ocurría)
+- 📊 **Kelly Semanal**: Usa `stats_semanales` en vez de `stats_diarias` (mín 3 trades, antes 5/día)
+- 🎯 **TP/SL Optimizado**: Mejores ratios R:R para todas las temporalidades:
+  - 15m: +1.8%/-0.7% (R:R 2.57) | 30m: +3%/-1% (R:R 3.0) | 1h: +5%/-1.8% (R:R 2.78) | 4h: +7%/-2.5% (R:R 2.8)
+- 🔄 **SL Fallback Tradicional**: Si Algo Order falla, intenta `STOP_MARKET` tradicional antes de rendirse
 
 ### V3.9 (10/02/2026) - SL Coherence + TTL Cache + Position Logging
 

@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V3.9 - SL Coherence + TTL Cache + Position Logging + Fix SL Emergency
+# V4.0 - Fix TP Preservation + SL Optimizado + Guardian Full + Trailing Fix
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -121,12 +121,12 @@ LOG_DETALLADO = True            # Logs completos, sin errores silenciosos
 # ═══════════════════════════════════════════════════════════════════════════════
 TEMPORALIDADES = ['15m', '30m', '1h', '4h']
 
-# V3.8: TP/SL inicial por temporalidad (optimizado para +ROI)
+# V4.0: TP/SL optimizado para mejor ratio R:R
 TP_SL_CONFIG = {
-    "15m": {"tp": 0.015, "sl": 0.008},    # +1.5%, -0.8% (scalping)
-    "30m": {"tp": 0.025, "sl": 0.012},    # +2.5%, -1.2%
-    "1h":  {"tp": 0.04, "sl": 0.02},      # +4%, -2% (principal)
-    "4h":  {"tp": 0.06, "sl": 0.03},      # +6%, -3%
+    "15m": {"tp": 0.018, "sl": 0.007},    # +1.8%, -0.7% (R:R 2.57:1)
+    "30m": {"tp": 0.03, "sl": 0.01},      # +3.0%, -1.0% (R:R 3.0:1)
+    "1h":  {"tp": 0.05, "sl": 0.018},     # +5%, -1.8% (R:R 2.78:1)
+    "4h":  {"tp": 0.07, "sl": 0.025},     # +7%, -2.5% (R:R 2.8:1)
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -820,24 +820,25 @@ def calcular_kelly(saldo_disponible, confianza_ia):
         porcentaje = 2 + (exceso / rango_confianza) * 8
         return saldo_disponible * (porcentaje / 100)
     
-    # Obtener estadísticas de trades
-    total_trades = stats_diarias["trades_ganados"] + stats_diarias["trades_perdidos"]
+    # V4.0 FIX: Usar stats_semanales (más datos) en lugar de stats_diarias
+    total_trades = stats_semanales["ganados"] + stats_semanales["perdidos"]
     
     # Si no hay suficientes trades, usar método original
-    if total_trades < 5:
+    if total_trades < 3:  # V4.0: Reducido de 5 a 3 trades mínimo
         rango_confianza = 1.0 - CONFIANZA_MINIMA
         exceso = max(0, confianza_ia - CONFIANZA_MINIMA)
         porcentaje = 2 + (exceso / rango_confianza) * 8
         return saldo_disponible * (porcentaje / 100)
     
     # Calcular win-rate (probabilidad de ganar)
-    p = stats_diarias["trades_ganados"] / total_trades
+    p = stats_semanales["ganados"] / total_trades
     q = 1 - p
     
     # Calcular ratio ganancia/pérdida promedio
-    if stats_diarias["trades_perdidos"] > 0 and stats_diarias["monto_perdido"] > 0:
-        avg_ganancia = stats_diarias["monto_ganado"] / max(1, stats_diarias["trades_ganados"])
-        avg_perdida = stats_diarias["monto_perdido"] / stats_diarias["trades_perdidos"]
+    # V4.0: Usar stats semanales para ratio ganancia/pérdida
+    if stats_semanales["perdidos"] > 0 and stats_semanales["monto_perdido"] > 0:
+        avg_ganancia = stats_semanales["monto_ganado"] / max(1, stats_semanales["ganados"])
+        avg_perdida = stats_semanales["monto_perdido"] / stats_semanales["perdidos"]
         b = avg_ganancia / avg_perdida if avg_perdida > 0 else 1.5
     else:
         b = 1.5  # Default ratio
@@ -1048,18 +1049,32 @@ def calcular_cantidad(client, symbol, monto_usdt, precio_actual):
 posiciones_tracking = {}  # {symbol: {'side': 'LONG/SHORT', 'best_price': X, 'entry': Y}}
 
 def cancelar_ordenes_sl(client, symbol):
-    """Cancela órdenes SL anteriores del símbolo"""
+    """V4.0: Solo cancela órdenes STOP_MARKET, PRESERVA Take Profit"""
     try:
         ordenes = client.futures_get_open_orders(symbol=symbol)
         for orden in ordenes:
-            if orden['type'] in ['STOP_MARKET', 'TAKE_PROFIT_MARKET']:
+            # V4.0 FIX: Solo cancelar STOP_MARKET, NUNCA TAKE_PROFIT_MARKET
+            if orden['type'] in ['STOP_MARKET', 'STOP', 'STOP_LOSS_MARKET']:
                 client.futures_cancel_order(symbol=symbol, orderId=orden['orderId'])
+                log(f"   🗑️ Orden SL cancelada: {orden['orderId']} ({orden['type']})")
+        # También cancelar Algo Orders de tipo stop
+        try:
+            algo_ordenes = client.futures_get_open_algo_orders()
+            if algo_ordenes:
+                for o in algo_ordenes:
+                    if o.get('symbol') == symbol and o.get('type') in ['STOP_MARKET', 'STOP']:
+                        try:
+                            client.futures_cancel_algo_order(algoId=o.get('algoId'))
+                        except:
+                            pass
+        except:
+            pass
     except Exception as e:
         if LOG_DETALLADO:
             log(f"⚠️ Error cancelando órdenes SL de {symbol}: {e}")
 
 def crear_orden_sl(client, symbol, side, precio, cantidad):
-    """Crea una nueva orden Stop Loss usando Algo Order API (Binance Dic 2025+)
+    """V4.0: Crea SL con Algo Order API + fallback a orden tradicional
     Returns: tuple (success: bool, already_protected: bool)
         - (True, False): SL creado exitosamente
         - (False, True): Error -4045, ya hay protección SL existente
@@ -1073,24 +1088,46 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             price_precision = int(symbol_info['pricePrecision'])
             precio = round(precio, price_precision)
         
-        # Usar Algo Order API con triggerPrice (parámetro correcto desde Dic 2025)
-        client.futures_create_algo_order(
-            symbol=symbol,
-            side=side,
-            type='STOP_MARKET',
-            triggerPrice=str(precio),
-            quantity=str(cantidad)
-        )
-        return True, False
+        # Intento 1: Usar Algo Order API (método principal)
+        try:
+            client.futures_create_algo_order(
+                symbol=symbol,
+                side=side,
+                type='STOP_MARKET',
+                triggerPrice=str(precio),
+                quantity=str(cantidad)
+            )
+            return True, False
+        except Exception as algo_error:
+            error_str = str(algo_error)
+            if '-4045' in error_str:
+                return False, True  # already_protected
+            
+            # V4.0 FIX: Fallback a orden STOP_MARKET tradicional
+            log(f"   ⚠️ Algo Order falló, intentando SL tradicional...")
+            try:
+                client.futures_create_order(
+                    symbol=symbol,
+                    side=side,
+                    type='STOP_MARKET',
+                    stopPrice=str(precio),
+                    closePosition='true'
+                )
+                log(f"   ✅ SL tradicional creado: ${precio}")
+                return True, False
+            except Exception as trad_error:
+                trad_str = str(trad_error)
+                if '-4045' in trad_str:
+                    return False, True
+                log(f"   ⚠️ SL tradicional también falló: {trad_error}")
+                return False, False
+                
     except Exception as e:
         error_str = str(e)
-        # V3.1.3: Silenciar error -4045 (max stop order limit)
-        # Este error indica que YA HAY suficientes SL, lo cual es bueno
         if '-4045' in error_str:
-            # No loguear - simplemente hay demasiados SL (protección OK)
-            return False, True  # already_protected = True
+            return False, True
         log(f"⚠️ Error creando SL: {e}")
-        return False, False  # Error real, SL no existe
+        return False, False
 
 def actualizar_trailing_sl(client):
     """Monitorea posiciones y actualiza SL con trailing 1.5%"""
@@ -1125,33 +1162,40 @@ def actualizar_trailing_sl(client):
             
             tracking = posiciones_tracking[symbol]
             
-            # Actualizar mejor precio y trailing SL
+            # V4.0: Trailing SL mejorado - se activa con ganancia > 0.5%
+            ganancia_actual = ((precio_actual - entry_price) / entry_price) if side == 'LONG' else ((entry_price - precio_actual) / entry_price)
+            
             if side == 'LONG':
                 if precio_actual > tracking['best_price']:
                     tracking['best_price'] = precio_actual
-                    nuevo_sl = precio_actual * (1 - TRAILING_SL_PERCENT)
+                
+                # V4.0 FIX: Activar trailing cuando ganancia > 0.5% (antes requería SL > entry)
+                if ganancia_actual > 0.005:  # > 0.5% de ganancia
+                    nuevo_sl = tracking['best_price'] * (1 - TRAILING_SL_PERCENT)
                     
-                    # Solo actualizar SL si es mejor que el anterior y está en ganancia
-                    if nuevo_sl > tracking['entry'] and (tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']):
+                    if tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'SELL', nuevo_sl, abs(cantidad))
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((nuevo_sl - entry_price) / entry_price) * 100
-                            log(f"📈 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} (+{ganancia_pct:.2f}% asegurado)")
+                            log(f"📈 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
             
             else:  # SHORT
                 if precio_actual < tracking['best_price']:
                     tracking['best_price'] = precio_actual
-                    nuevo_sl = precio_actual * (1 + TRAILING_SL_PERCENT)
+                
+                # V4.0 FIX: Activar trailing cuando ganancia > 0.5%
+                if ganancia_actual > 0.005:  # > 0.5% de ganancia
+                    nuevo_sl = tracking['best_price'] * (1 + TRAILING_SL_PERCENT)
                     
-                    if nuevo_sl < tracking['entry'] and (tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']):
+                    if tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'BUY', nuevo_sl, abs(cantidad))
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((entry_price - nuevo_sl) / entry_price) * 100
-                            log(f"📉 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} (+{ganancia_pct:.2f}% asegurado)")
+                            log(f"📉 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
                         
     except Exception as e:
         log(f"⚠️ Error en trailing SL: {e}")
@@ -1226,10 +1270,11 @@ def guardian_posiciones(client):
                     log(f"❌ Error cerrando posición de emergencia {symbol}: {e}")
                     # V3.0: Ya no se envía Telegram de error individual
             
-            # Log de monitoreo (V2.8: Solo si PNL es significativo > 5%)
-            elif LOG_DETALLADO and abs(pnl_porcentaje) > 0.05:
+            # V4.0 FIX: Logear TODAS las posiciones activas (antes solo > 5%)
+            elif LOG_DETALLADO:
                 estado = "🟢" if pnl_porcentaje > 0 else "🔴"
-                log(f"{estado} Guardián monitoreando {symbol}: {pnl_porcentaje*100:.2f}% (PNL: ${unrealized_pnl:.2f})")
+                side_str = 'LONG' if cantidad > 0 else 'SHORT'
+                log(f"{estado} Guardián {symbol} {side_str}: {pnl_porcentaje*100:.2f}% (PNL: ${unrealized_pnl:.2f})")
                 
     except Exception as e:
         log(f"⚠️ Error en Guardián: {e}")
@@ -1376,15 +1421,16 @@ def verificar_ordenes_sl_existen(client):
                         tiene_sl = False  # Forzar creación de nuevo SL
                 
                 if not tiene_sl:
-                    # V3.9: Crear SL de emergencia usando MARK PRICE
+                    # V4.0 FIX: SL emergencia a -3% (antes -7%) — Guardian sigue como red de seguridad a -7%
+                    SL_EMERGENCIA_PERCENT = 0.03  # -3% es más razonable que -7%
                     if side == 'LONG':
-                        sl_precio = mark_price * (1 - abs(MAX_PERDIDA_PERMITIDA))
+                        sl_precio = mark_price * (1 - SL_EMERGENCIA_PERCENT)
                         sl_side = 'SELL'
                     else:
-                        sl_precio = mark_price * (1 + abs(MAX_PERDIDA_PERMITIDA))
+                        sl_precio = mark_price * (1 + SL_EMERGENCIA_PERCENT)
                         sl_side = 'BUY'
                     
-                    log(f"⚠️ {symbol} SIN orden SL válida. Creando SL de emergencia a ${sl_precio:.4f}")
+                    log(f"⚠️ {symbol} SIN orden SL válida. Creando SL emergencia -3% a ${sl_precio:.4f}")
                     
                     success, already_protected = crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad))
                     
@@ -1392,11 +1438,8 @@ def verificar_ordenes_sl_existen(client):
                         log(f"✅ SL de emergencia creado para {symbol}")
                         _sl_verificados[symbol] = time.time()
                     elif already_protected:
-                        # Error -4045: ya hay suficientes SL (protección OK)
                         _sl_verificados[symbol] = time.time()
                     else:
-                        # V3.9: Error real → NO marcar como verificado
-                        # Se reintentará en el próximo ciclo
                         log(f"⛔ SL NO CREADO para {symbol}. Se reintentará en 30s.")
                     
             except Exception as e:
@@ -1679,9 +1722,9 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
                     if mark_info:
                         mk_price = float(mark_info[0]['markPrice'])
                         if side == 'BUY':  # LONG
-                            sl_retry = mk_price * (1 - 0.07)
+                            sl_retry = mk_price * (1 - 0.03)  # V4.0: -3% (antes -7%)
                         else:  # SHORT
-                            sl_retry = mk_price * (1 + 0.07)
+                            sl_retry = mk_price * (1 + 0.03)  # V4.0: -3% (antes -7%)
                         sl_side = 'SELL' if side == 'BUY' else 'BUY'
                         success, _ = crear_orden_sl(client, symbol, sl_side, sl_retry, cantidad)
                         if success:
