@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V4.0 - Fix TP Preservation + SL Optimizado + Guardian Full + Trailing Fix
+# V5.0 - Reset Inteligente: Prompt Simple + SL Amplio + Anti-Tendencia
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -73,9 +73,9 @@ DRAWDOWN_ACTIVO = True              # Activar protección de drawdown
 #   - 1.0x ATR: Agresivo (stop tight, más stops pero menos pérdida por stop)
 #   - 1.5x ATR: Balanceado (recomendado)
 #   - 2.0x ATR: Conservador (stop amplio, menos stops pero más pérdida por stop)
-ATR_SL_ACTIVO = True                # Usar ATR para calcular SL dinámico
-ATR_SL_MULTIPLICADOR = 2.0          # SL = Precio - (2.0 * ATR) - V3.7: aumentado para evitar SL prematuros
-ATR_SL_MINIMO_PERCENT = 0.015       # V3.7: SL mínimo 1.5% aunque ATR sea muy bajo
+ATR_SL_ACTIVO = False               # V5.0: DESACTIVADO - ATR SL causaba inconsistencia, volver a SL fijo
+ATR_SL_MULTIPLICADOR = 2.0          # SL = Precio - (2.0 * ATR) - No usado si ATR_SL_ACTIVO=False
+ATR_SL_MINIMO_PERCENT = 0.015       # No usado si ATR_SL_ACTIVO=False
 
 # --- KELLY CRITERION PARA POSITION SIZING ---
 # Fórmula de Kelly: f* = (p * b - q) / b
@@ -84,7 +84,7 @@ ATR_SL_MINIMO_PERCENT = 0.015       # V3.7: SL mínimo 1.5% aunque ATR sea muy b
 #   b = ratio ganancia/pérdida promedio
 # El resultado es el % óptimo del capital a arriesgar
 # Usamos "medio Kelly" (50% del resultado) para ser más conservadores
-KELLY_ACTIVO = True                 # Usar Kelly Criterion para monto
+KELLY_ACTIVO = False                # V5.0: DESACTIVADO - Kelly con historial negativo causa espiral descendente
 KELLY_FRACCION = 0.5                # Usar 50% del Kelly (más conservador)
 KELLY_MINIMO = 0.02                 # Mínimo 2% del capital
 KELLY_MAXIMO = 0.10                 # Máximo 10% del capital
@@ -119,14 +119,12 @@ LOG_DETALLADO = True            # Logs completos, sin errores silenciosos
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
 # ═══════════════════════════════════════════════════════════════════════════════
-TEMPORALIDADES = ['15m', '30m', '1h', '4h']
+TEMPORALIDADES = ['1h', '4h']  # V5.0: Solo 1h y 4h (15m/30m demasiado ruido para x3)
 
-# V4.0: TP/SL optimizado para mejor ratio R:R
+# V5.0: TP/SL estilo enero - SL amplio da espacio, TP alcanzable
 TP_SL_CONFIG = {
-    "15m": {"tp": 0.018, "sl": 0.007},    # +1.8%, -0.7% (R:R 2.57:1)
-    "30m": {"tp": 0.03, "sl": 0.01},      # +3.0%, -1.0% (R:R 3.0:1)
-    "1h":  {"tp": 0.05, "sl": 0.018},     # +5%, -1.8% (R:R 2.78:1)
-    "4h":  {"tp": 0.07, "sl": 0.025},     # +7%, -2.5% (R:R 2.8:1)
+    "1h":  {"tp": 0.035, "sl": 0.025},    # +3.5%, -2.5% (R:R 1.4:1) - SL amplio como enero
+    "4h":  {"tp": 0.06, "sl": 0.035},     # +6%, -3.5% (R:R 1.71:1)
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -143,7 +141,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V3.9 - SL COHERENCE + TTL CACHE + POSITION LOGGING")
+            self.wfile.write(b"BINANCE BOT V5.0 - RESET INTELIGENTE + ANTI-TENDENCIA")
         def log_message(self, format, *args):
             pass
     try:
@@ -1074,7 +1072,7 @@ def cancelar_ordenes_sl(client, symbol):
             log(f"⚠️ Error cancelando órdenes SL de {symbol}: {e}")
 
 def crear_orden_sl(client, symbol, side, precio, cantidad):
-    """V4.0: Crea SL con Algo Order API + fallback a orden tradicional
+    """V5.0: Crea SL con orden STOP_MARKET tradicional (método principal)
     Returns: tuple (success: bool, already_protected: bool)
         - (True, False): SL creado exitosamente
         - (False, True): Error -4045, ya hay protección SL existente
@@ -1088,38 +1086,36 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             price_precision = int(symbol_info['pricePrecision'])
             precio = round(precio, price_precision)
         
-        # Intento 1: Usar Algo Order API (método principal)
+        # V5.0: Método 1 - STOP_MARKET tradicional (funcionaba en enero V2.0)
         try:
-            client.futures_create_algo_order(
+            client.futures_create_order(
                 symbol=symbol,
                 side=side,
                 type='STOP_MARKET',
-                triggerPrice=str(precio),
-                quantity=str(cantidad)
+                stopPrice=str(precio),
+                closePosition='true'
             )
             return True, False
-        except Exception as algo_error:
-            error_str = str(algo_error)
-            if '-4045' in error_str:
+        except Exception as trad_error:
+            trad_str = str(trad_error)
+            if '-4045' in trad_str:
                 return False, True  # already_protected
             
-            # V4.0 FIX: Fallback a orden STOP_MARKET tradicional
-            log(f"   ⚠️ Algo Order falló, intentando SL tradicional...")
+            # Fallback: Algo Order API
+            log(f"   ⚠️ SL tradicional falló, intentando Algo Order...")
             try:
-                client.futures_create_order(
+                client.futures_create_algo_order(
                     symbol=symbol,
                     side=side,
                     type='STOP_MARKET',
-                    stopPrice=str(precio),
-                    closePosition='true'
+                    triggerPrice=str(precio),
+                    quantity=str(cantidad)
                 )
-                log(f"   ✅ SL tradicional creado: ${precio}")
                 return True, False
-            except Exception as trad_error:
-                trad_str = str(trad_error)
-                if '-4045' in trad_str:
+            except Exception as algo_error:
+                if '-4045' in str(algo_error):
                     return False, True
-                log(f"   ⚠️ SL tradicional también falló: {trad_error}")
+                log(f"   ⚠️ Algo Order también falló: {algo_error}")
                 return False, False
                 
     except Exception as e:
@@ -1702,16 +1698,15 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
             except Exception as e:
                 log(f"   ⚠️ Error creando TP: {e}")
             
-            # Stop Loss inicial (será reemplazado por trailing)
+            # V5.0: Stop Loss inicial con STOP_MARKET tradicional (método de enero)
             try:
                 sl_side = 'SELL' if side == 'BUY' else 'BUY'
-                # Usar Algo Order API con triggerPrice (parámetro correcto desde Dic 2025)
-                client.futures_create_algo_order(
+                client.futures_create_order(
                     symbol=symbol,
                     side=sl_side,
                     type='STOP_MARKET',
-                    triggerPrice=str(sl),
-                    closePosition=True
+                    stopPrice=str(sl),
+                    closePosition='true'
                 )
                 log(f"   📉 SL inicial: ${sl} (Trailing activo)")
             except Exception as e:
@@ -2000,105 +1995,43 @@ def ejecutar_trading(client, gemini_client):
                 posicion_rango = ((precio_actual - precio_min) / (precio_max - precio_min) * 100) if precio_max != precio_min else 50
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V3.0: PROMPT MEJORADO CON INDICADORES TÉCNICOS
+                # V5.0: PROMPT SIMPLE — Basado en el prompt de enero que logró 19% ROI
+                # La versión V3.0-V4.0 enviaba 20+ datos y 12 reglas contradictorias.
+                # Gemini toma MEJORES decisiones con datos simples y reglas claras.
                 # ═══════════════════════════════════════════════════════════════════
-                # Este prompt incluye todos los indicadores calculados para que la IA
-                # tome decisiones más precisas basadas en análisis técnico real
-                prompt = f"""Eres un trader profesional de criptomonedas. Tu objetivo es lograr ROI 100% en 4 meses (~1% diario).
-REGLA PRINCIPAL: SER OPORTUNISTA - Capturar movimientos tanto alcistas como bajistas.
+                prompt = f"""Eres un trader profesional de criptomonedas con análisis técnico y fundamental.
 
-═══════════════════════════════════════════════════════════════════
-DATOS DEL MERCADO GLOBAL
-═══════════════════════════════════════════════════════════════════
+DATOS DEL MERCADO GLOBAL:
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-20: Extreme Fear → LONG AGRESIVO (mercado sobrevendido, ¡OPORTUNIDAD!)
-- 21-40: Fear → LONGs en soportes
-- 41-60: Neutral → Seguir tendencia EMA
-- 61-80: Greed → SHORTs cerca de resistencias
-- 81-100: Extreme Greed → SHORT AGRESIVO (mercado sobrecomprado)
+- 0-25: Extreme Fear (oportunidad de compra agresiva, NUNCA SHORT)
+- 26-45: Fear (considerar LONGs en soportes)
+- 46-55: Neutral
+- 56-75: Greed (precaución con LONGs)
+- 76-100: Extreme Greed (preferir SHORTs o WAIT)
 
-═══════════════════════════════════════════════════════════════════
-INDICADORES TÉCNICOS DE {symbol}
-═══════════════════════════════════════════════════════════════════
-📊 PRECIO Y RANGO:
+DATOS TÉCNICOS DE {symbol}:
 - Precio actual: ${precio_actual}
 - Máximo (100 velas): ${precio_max}
 - Mínimo (100 velas): ${precio_min}
-- Posición en rango: {posicion_rango:.1f}%
 - Volatilidad: {volatilidad:.2f}%
+- Posición en rango: {posicion_rango:.1f}%
+- Tendencia EMA: {indicadores['tendencia_ema']}
+- RSI(14): {indicadores['rsi']:.1f}
 
-📈 RSI(14): {indicadores['rsi']}
-- RSI > 70: Sobrecompra → SHORT
-- RSI < 30: Sobreventa → LONG
-- RSI 30-70: Zona neutral
-
-📉 EMAs (Tendencia):
-- EMA 20: ${indicadores['ema20']}
-- EMA 50: ${indicadores['ema50']}
-- EMA 200: ${indicadores['ema200'] if indicadores['ema200'] else 'N/A'}
-- Tendencia: {indicadores['tendencia_ema']}
-
-📊 MACD:
-- MACD: {indicadores['macd']['macd']}
-- Signal: {indicadores['macd']['signal']}
-- Histograma: {indicadores['macd']['histograma']} ({'BULLISH' if indicadores['macd']['histograma'] > 0 else 'BEARISH'})
-
-📉 BOLLINGER BANDS:
-- Superior: ${indicadores['bollinger']['superior']}
-- Media: ${indicadores['bollinger']['media']}
-- Inferior: ${indicadores['bollinger']['inferior']}
-- Posición en banda: {indicadores['bollinger']['posicion']}%
-- Ancho (volatilidad): {indicadores['bollinger']['ancho']}%
-
-📊 ATR (Volatilidad):
-- ATR: ${indicadores['atr']} ({indicadores['atr_percent']}% del precio)
-
-📈 VOLUMEN:
-- Volumen Relativo: {indicadores['volumen_relativo']}x (1.0 = promedio)
-
-🎯 SOPORTES/RESISTENCIAS:
-- Resistencia: ${indicadores['resistencia']} (+{indicadores['dist_resistencia']}%)
-- Soporte: ${indicadores['soporte']} (-{indicadores['dist_soporte']}%)
-
-═══════════════════════════════════════════════════════════════════
-REGLAS V3.3 - TRADING OPORTUNISTA
-═══════════════════════════════════════════════════════════════════
-🔴 REGLAS PARA SHORT (ganar en caídas):
-1. Tendencia EMA BAJISTA fuerte → SHORT (¡aprovechar la caída!)
-2. RSI > 70 (sobrecompra) → SHORT
-3. Fear & Greed > 75 → SHORT
-4. Precio cerca de resistencia + rechazo → SHORT
-
-🟢 REGLAS PARA LONG (ganar en subidas):
-5. Fear & Greed < 25 → LONG (Extreme Fear = OPORTUNIDAD de compra)
-6. RSI < 30 (sobreventa) → LONG
-7. Precio en soporte + rebote → LONG
-8. Precio en banda inferior Bollinger → LONG
-
-⚡ REGLA CRÍTICA EXTREME FEAR (Fear < 20):
-- PROHIBIDO hacer SHORT cuando Fear & Greed < 20
-- OBLIGATORIO hacer LONG o WAIT (NUNCA SHORT)
-- IGNORAR señales técnicas bajistas (EMA, MACD)
-- El mercado en pánico SIEMPRE rebota → Aprovechar para COMPRAR
-- Los SHORTs en Extreme Fear son TRAMPAS (Short Squeeze)
-
-⚡ REGLA SHORT SOLO SI Fear & Greed > 25:
-- Solo considerar SHORT cuando Fear > 25
-- Si Fear < 25: LONG o WAIT, NUNCA SHORT
-
-❌ SOLO usar WAIT si:
-- Volumen < 0.5x (mercado sin movimiento)
-- RSI entre 45-55 y tendencia LATERAL
-- NO usar WAIT solo porque hay indicadores mixtos
-
-TEMPORALIDADES:
-- 15m: scalping (volatilidad >5%)
-- 30m: swing corto (volatilidad 3-5%)
-- 1h: intraday (volatilidad 2-3%)
-- 4h: swing largo (volatilidad <2%)
+REGLAS ESTRICTAS:
+1. Confianza mínima: 70%
+2. NUNCA operar CONTRA la tendencia EMA dominante
+3. Si la tendencia es ALCISTA → solo LONG o WAIT (PROHIBIDO SHORT)
+4. Si la tendencia es BAJISTA → solo SHORT o WAIT (PROHIBIDO LONG)
+5. Si Fear < 25, SOLO LONGs o WAIT (NUNCA SHORT)
+6. Si Greed > 75, PREFERIR SHORTs o WAIT
+7. Si precio está en 20% inferior del rango → considerar LONG
+8. Si precio está en 80% superior del rango → considerar SHORT
+9. Si está en medio (30%-70%) → WAIT a menos que Fear/Greed sea extremo
+10. Elige la temporalidad según la volatilidad actual: 1h (volatilidad 2-5%) o 4h (volatilidad <2%)
 
 JSON (solo esto, sin explicación adicional):
-{{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve con indicadores clave"}}"""
+{{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve"}}"""
                 
                 # V3.7: Retry logic con exponential backoff para errores 429
                 MAX_RETRIES = 3
@@ -2153,24 +2086,27 @@ JSON (solo esto, sin explicación adicional):
                     temporalidad = '1h'
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V3.8: VALIDACIÓN POST-IA - Reglas que el código DEBE hacer cumplir
-                # La IA puede ignorar reglas, pero el código las fuerza
+                # V5.0: VALIDACIÓN POST-IA - El código FUERZA las reglas anti-tendencia
+                # Doble seguridad: el prompt pide lo mismo, pero el código lo impone
                 # ═══════════════════════════════════════════════════════════════════
                 
-                # REGLA CRÍTICA: NO SHORT en Extreme Fear (Fear < 25)
+                # REGLA 1: NO SHORT en Extreme Fear (Fear < 25) — probada y funcional
                 if fg_valor < 25 and accion == "SHORT":
-                    log(f"   ⛔ REGLA FORZADA: SHORT rechazado en Extreme Fear (F&G={fg_valor})")
+                    log(f"   ⛔ V5.0 REGLA: SHORT rechazado en Extreme Fear (F&G={fg_valor})")
                     accion = "WAIT"
                     razon = f"SHORT rechazado: Fear & Greed {fg_valor} < 25 (Extreme Fear)"
-                    confianza = 0  # Forzar a no operar
+                    confianza = 0
                 
-                # VALIDACIÓN COHERENCIA: RSI vs Acción
-                if accion == "LONG" and indicadores['rsi'] > 75:
-                    log(f"   ⚠️ Coherencia: LONG con RSI={indicadores['rsi']:.0f} (sobrecompra)")
-                    confianza *= 0.7  # Reducir 30% la confianza
-                elif accion == "SHORT" and indicadores['rsi'] < 25:
-                    log(f"   ⚠️ Coherencia: SHORT con RSI={indicadores['rsi']:.0f} (sobreventa)")
-                    confianza *= 0.7  # Reducir 30% la confianza
+                # REGLA 2: NO operar CONTRA la tendencia EMA dominante
+                tendencia_ema = indicadores.get('tendencia_ema', '')
+                if 'Alcista' in tendencia_ema and accion == "SHORT":
+                    log(f"   ⛔ V5.0 REGLA: SHORT rechazado en tendencia ALCISTA ({tendencia_ema})")
+                    accion = "WAIT"
+                    confianza = 0
+                elif 'Bajista' in tendencia_ema and accion == "LONG":
+                    log(f"   ⛔ V5.0 REGLA: LONG rechazado en tendencia BAJISTA ({tendencia_ema})")
+                    accion = "WAIT"
+                    confianza = 0
                 
                 conf_pct = int(confianza * 100)
                 log(f"   📊 IA: {accion} | Confianza: {conf_pct}% | Temp: {temporalidad}")
@@ -2296,7 +2232,7 @@ JSON (solo esto, sin explicación adicional):
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V3.9 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT V5.0 ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*

@@ -1,16 +1,16 @@
-# 🤖 Bot Binance Futures V4.0 - Fix TP Preservation + SL Optimizado + Guardian Full
+# 🤖 Bot Binance Futures V5.0 - Reset Inteligente: Prompt Simple + SL Amplio + Anti-Tendencia
 
 ## 📋 Descripción
 
-Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash** como cerebro de IA para tomar decisiones de trading. Opera 24/7 con estrategia de swing trading conservador, **protección automática contra funding fees**, y **resumen semanal por Telegram cada viernes a las 18:00**.
+Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash** como cerebro de IA para tomar decisiones de trading. Opera 24/7 con estrategia basada en el prompt simple que logró **19.11% ROI en 19 días** (enero 2026), con **protecciones de seguridad** de versiones posteriores y **filtro anti-tendencia** en código.
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 13/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 14/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V4.0                                   |
+| **Versión**    | V5.0 Reset Inteligente                 |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -69,9 +69,22 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🆕 Historial de Versiones
+### V5.0 (14/02/2026) - Reset Inteligente: Prompt Simple + SL Amplio + Anti-Tendencia
 
-### V4.0 (13/02/2026) - Fix TP Preservation + SL Optimizado + Guardian Full + Trailing Fix
+> [!IMPORTANT]
+> **Análisis forense reveló que las "mejoras" V3.0-V4.0 causaron las pérdidas.** V5.0 vuelve a la fórmula de enero (19% ROI) con protecciones mínimas.
+
+**Problema identificado:** V2.0 (enero) logró 1% diario con un prompt de 25 líneas y 5 datos. V3.0+ lo expandió a 95 líneas con 20+ indicadores y reglas contradictorias. Gemini tomaba peores decisiones con más datos.
+
+- 🧠 **Prompt Simple V5.0**: Vuelve al estilo de enero — solo 7 datos (precio, rango, volatilidad, F&G, tendencia EMA, RSI)
+- ⛔ **Filosofía Anti-Tendencia**: De "SER OPORTUNISTA" → "NUNCA operar contra la tendencia EMA"
+- 🎯 **TP/SL Realistas**: 1h: +3.5%/-2.5% (SL amplio como enero, TP alcanzable)
+- 📉 **Solo 1h y 4h**: Eliminadas temporalidades 15m y 30m (demasiado ruido para x3)
+- 🔧 **ATR SL Desactivado**: Volver a SL fijo predecible (ATR causaba inconsistencia)
+- 📊 **Kelly Desactivado**: Con historial negativo causaba espiral descendente
+- 🛡️ **SL Tradicional**: `STOP_MARKET` como método principal (Algo Order como fallback)
+- ⛔ **Filtro Anti-Tendencia en Código**: Rechaza SHORT en alcista y LONG en bajista automáticamente
+- ✅ **Conservado**: Guardian System, Trailing SL, Anti-SHORT Extreme Fear, Funding Protection
 
 > [!CAUTION]
 > **7 causas raíz de pérdidas identificadas y corregidas.** Fix crítico: TP se destruían al actualizar trailing SL.
@@ -230,7 +243,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## ⚙️ Configuración Actual
+## ⚙️ Configuración Actual (V5.0)
 
 ```python
 # Trading
@@ -239,29 +252,29 @@ ESCUDO_TRABAJO = 0.80        # 80% del balance para trading
 ESCUDO_SEGURO = 0.20         # 20% protegido
 APALANCAMIENTO = 3           # x3 conservador
 TOP_ACTIVOS = 15             # Analiza top 15 por volumen
-MAX_POSICIONES = 5           # Máximo 5 posiciones (V3.0: 24/01 - diversificación)
+MAX_POSICIONES = 3           # Máximo 3 posiciones simultáneas
 TRAILING_SL_PERCENT = 0.015  # 1.5% trailing
-MONITOREO_INTERVALO = 60     # 60 segundos (Optimizado V2.8)
+MONITOREO_INTERVALO = 30     # 30 segundos
 
-# Guardian System V3.8
+# Guardian System
 GUARDIAN_ACTIVO = True       # Protección de emergencia
-MAX_PERDIDA_PERMITIDA = -0.07  # V3.8: -7% cierre obligatorio (antes -10%)
+MAX_PERDIDA_PERMITIDA = -0.07  # -7% cierre obligatorio
+
+# V5.0: Desactivados (causaban más daño que beneficio)
+ATR_SL_ACTIVO = False        # SL fijo predecible, no dinámico
+KELLY_ACTIVO = False         # Position sizing simple, no Kelly
 
 # Funding Fees Protection (V2.5+)
 FUNDING_PROTECTION = True    # Activar protección
 MAX_DIAS_POSICION = 5        # Cerrar después de 5 días
-TP_DINAMICO_DIAS = 3         # Ajustar TP después de 3 días
-TP_DINAMICO_PERCENT = 0.02   # TP reducido a 2%
 ```
 
-## 📊 TP/SL por Temporalidad (V3.8 Optimizado)
+## 📊 TP/SL por Temporalidad (V5.0 — Estilo Enero)
 
-| Temporalidad | Take Profit | Stop Loss |
-| ------------ | ----------- | --------- |
-| 15m          | +1.5%       | -0.8%     |
-| 30m          | +2.5%       | -1.2%     |
-| 1h           | +4%         | -2%       |
-| 4h           | +6%         | -3%       |
+| Temporalidad | Take Profit | Stop Loss | R:R   | Con x3 Apalancamiento |
+| ------------ | ----------- | --------- | ----- | --------------------- |
+| 1h           | +3.5%       | -2.5%     | 1.4:1 | +10.5% / -7.5%        |
+| 4h           | +6.0%       | -3.5%     | 1.7:1 | +18.0% / -10.5%       |
 
 ## 🎭 Fear & Greed Index
 
@@ -309,27 +322,26 @@ El bot está configurado para desplegarse en **Koyeb**:
 
 ## 📱 Notificaciones Telegram
 
-El bot envía notificaciones cuando:
+El bot envía un **resumen semanal** cada viernes a las 18:00 con:
 
-- Abre una nueva posición
-- Cierra una posición (ganada/perdida)
-- Cierra por tiempo máximo (5 días)
-- Cierra por funding > PNL
-- Ajusta TP dinámico
-- Inicia el bot
+- ROI total del proyecto desde inicio
+- Balance actual vs balance inicial
+- Trades ganados/perdidos de la semana
+- Cierres del Guardian de emergencia
 
 ## 🧠 Flujo de Operación
 
 ```
 1. Obtener Fear & Greed Index
 2. Analizar top 15 pares por volumen
-3. Gemini decide: LONG, SHORT o WAIT
-4. Si confianza >= 70%, guardar oportunidad
-5. Ordenar por confianza
-6. Ejecutar las TOP 3 mejores
-7. Monitorear Trailing SL cada 30 segundos
-8. Verificar protección Funding Fees
-9. Repetir cada 2 minutos
+3. Calcular indicadores (RSI, EMA)
+4. Prompt simple → Gemini decide: LONG, SHORT o WAIT
+5. Filtro anti-tendencia en código (rechaza trades contra EMA)
+6. Si confianza >= 70%, guardar oportunidad
+7. Ordenar por confianza, ejecutar TOP 3
+8. Monitorear Trailing SL cada 30 segundos
+9. Guardian verifica pérdidas > -7%
+10. Repetir cada 2 minutos
 ```
 
 ---
