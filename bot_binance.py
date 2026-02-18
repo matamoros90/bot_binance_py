@@ -34,6 +34,13 @@ TRAILING_SL_PERCENT = 0.015  # 1.5% - distancia del trailing
 MONITOREO_INTERVALO = 30     # 30s - balance entre reacción rápida y recursos
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
+# Scheduler de tareas para controlar carga de CPU/API
+INTERVALO_GUARDIAN = 30
+INTERVALO_VERIFICAR_SL = 120
+INTERVALO_TRAILING = 30
+INTERVALO_TRADES_CERRADOS = 120
+INTERVALO_RESUMEN_POSICIONES = 300
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ESTADÍSTICAS SEMANALES (V3.0) - Resumen cada viernes a las 18:00
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -161,6 +168,14 @@ VENTANA_FED_FIN_MIN = 14 * 60 + 30     # 14:30 ET
 pausa_noticias_hasta = None
 ultimo_check_noticias = 0.0
 
+# Controles de rendimiento/estabilidad
+task_last_run = {}
+log_throttle = {}
+_positions_cache = {"ts": 0.0, "data": None}
+_exchange_info_cache = {"ts": 0.0, "data": None}
+_sl_retry_cooldown_until = {}  # {symbol: timestamp}
+SL_REINTENTO_COOLDOWN = 300  # 5 minutos
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SERVIDOR DE SALUD (KOYEB)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -193,6 +208,47 @@ def enviar_telegram(mensaje):
 
 def log(mensaje):
     print(f"[BINANCE] {mensaje}", flush=True)
+
+
+def should_run_task(task_name, interval_seconds):
+    """Ejecuta una tarea solo si ya pasó su intervalo."""
+    now = time.time()
+    last = task_last_run.get(task_name, 0.0)
+    if now - last >= interval_seconds:
+        task_last_run[task_name] = now
+        return True
+    return False
+
+
+def log_throttled(key, mensaje, cooldown=180):
+    """Evita spam de logs repetidos."""
+    now = time.time()
+    last = log_throttle.get(key, 0.0)
+    if now - last >= cooldown:
+        log_throttle[key] = now
+        log(mensaje)
+
+
+def obtener_posiciones(client, ttl=2, force=False):
+    """Cachea posiciones por segundos para reducir llamadas API redundantes."""
+    now = time.time()
+    if not force and _positions_cache["data"] is not None and now - _positions_cache["ts"] < ttl:
+        return _positions_cache["data"]
+    posiciones = client.futures_position_information()
+    _positions_cache["ts"] = now
+    _positions_cache["data"] = posiciones
+    return posiciones
+
+
+def obtener_exchange_info(client, ttl=1800, force=False):
+    """Cachea exchange_info (pesado y casi estático)."""
+    now = time.time()
+    if not force and _exchange_info_cache["data"] is not None and now - _exchange_info_cache["ts"] < ttl:
+        return _exchange_info_cache["data"]
+    info = client.futures_exchange_info()
+    _exchange_info_cache["ts"] = now
+    _exchange_info_cache["data"] = info
+    return info
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FEAR & GREED INDEX
@@ -1035,7 +1091,7 @@ def obtener_simbolos_futuros(client):
     """Obtiene todos los pares de futuros USDT activos ordenados por volumen"""
     try:
         # Obtener información del exchange
-        info = client.futures_exchange_info()
+        info = obtener_exchange_info(client)
         
         # Filtrar solo pares USDT activos
         simbolos = [s['symbol'] for s in info['symbols'] 
@@ -1063,7 +1119,7 @@ def obtener_simbolos_futuros(client):
 def contar_posiciones_abiertas(client):
     """Cuenta las posiciones abiertas actuales"""
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         abiertas = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
         return len(abiertas)
     except:
@@ -1072,7 +1128,7 @@ def contar_posiciones_abiertas(client):
 def obtener_simbolos_con_posicion(client):
     """Obtiene la lista de símbolos que ya tienen posición abierta"""
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         return [p['symbol'] for p in positions if float(p.get('positionAmt', 0)) != 0]
     except:
         return []
@@ -1134,7 +1190,7 @@ def configurar_apalancamiento(client, symbol, leverage=3):
 def calcular_cantidad(client, symbol, monto_usdt, precio_actual):
     """Calcula la cantidad de contratos según el monto USDT y precisión del símbolo"""
     try:
-        info = client.futures_exchange_info()
+        info = obtener_exchange_info(client)
         symbol_info = next((s for s in info['symbols'] if s['symbol'] == symbol), None)
         
         if not symbol_info:
@@ -1219,7 +1275,7 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
     """
     try:
         # Obtener precisión del precio
-        info = client.futures_exchange_info()
+        info = obtener_exchange_info(client)
         symbol_info = next((s for s in info['symbols'] if s['symbol'] == symbol), None)
         if symbol_info:
             price_precision = int(symbol_info['pricePrecision'])
@@ -1239,7 +1295,7 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             trad_str = str(trad_error)
             if '-4045' in trad_str:
                 if LOG_DETALLADO:
-                    log(f"   ⚠️ {symbol}: Binance reporta -4045 al crear SL tradicional")
+                    log_throttled(f"sl_4045_trad_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 al crear SL tradicional", 120)
                 return False, True  # already_protected
             
             # Fallback: Algo Order API
@@ -1256,7 +1312,7 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             except Exception as algo_error:
                 if '-4045' in str(algo_error):
                     if LOG_DETALLADO:
-                        log(f"   ⚠️ {symbol}: Binance reporta -4045 también en Algo Order")
+                        log_throttled(f"sl_4045_algo_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 también en Algo Order", 120)
                     return False, True
                 log(f"   ⚠️ Algo Order también falló: {algo_error}")
                 return False, False
@@ -1273,7 +1329,7 @@ def actualizar_trailing_sl(client):
     global posiciones_tracking
     
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         
         for pos in positions:
             symbol = pos['symbol']
@@ -1352,7 +1408,7 @@ def guardian_posiciones(client):
         return
     
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         
         for pos in positions:
             symbol = pos['symbol']
@@ -1413,7 +1469,11 @@ def guardian_posiciones(client):
             elif LOG_DETALLADO:
                 estado = "🟢" if pnl_porcentaje > 0 else "🔴"
                 side_str = 'LONG' if cantidad > 0 else 'SHORT'
-                log(f"{estado} Guardián {symbol} {side_str}: {pnl_porcentaje*100:.2f}% (PNL: ${unrealized_pnl:.2f})")
+                log_throttled(
+                    f"guardian_status_{symbol}",
+                    f"{estado} Guardián {symbol} {side_str}: {pnl_porcentaje*100:.2f}% (PNL: ${unrealized_pnl:.2f})",
+                    60
+                )
                 
     except Exception as e:
         log(f"⚠️ Error en Guardián: {e}")
@@ -1424,7 +1484,7 @@ def guardian_posiciones(client):
 def log_resumen_posiciones(client):
     """V3.9: Muestra un resumen claro de todas las posiciones activas con PNL y estado SL"""
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         activas = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
         
         if not activas:
@@ -1485,7 +1545,7 @@ def verificar_ordenes_sl_existen(client):
         _sl_verificados = {}
     
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         
         for pos in positions:
             symbol = pos['symbol']
@@ -1494,12 +1554,17 @@ def verificar_ordenes_sl_existen(client):
             if cantidad == 0:
                 # Si la posición se cerró, quitar del tracking
                 _sl_verificados.pop(symbol, None)
+                _sl_retry_cooldown_until.pop(symbol, None)
                 continue
             
             # V3.9: Re-verificar si han pasado más de 5 minutos (TTL)
             if symbol in _sl_verificados:
                 if time.time() - _sl_verificados[symbol] < SL_VERIFICACION_TTL:
                     continue
+
+            # Si el símbolo está en cooldown por reintentos fallidos, no volver a golpear API
+            if time.time() < _sl_retry_cooldown_until.get(symbol, 0):
+                continue
             
             entry_price = float(pos['entryPrice'])
             mark_price = float(pos['markPrice'])
@@ -1573,20 +1638,36 @@ def verificar_ordenes_sl_existen(client):
                         sl_precio = max(sl_objetivo_entry, mark_price * 1.005)
                         sl_side = 'BUY'
                     
-                    log(f"⚠️ {symbol} SIN orden SL válida. SL emergencia objetivo(entry): ${sl_objetivo_entry:.4f} | aplicado: ${sl_precio:.4f}")
+                    log_throttled(
+                        f"sl_missing_{symbol}",
+                        f"⚠️ {symbol} SIN orden SL válida. SL emergencia objetivo(entry): ${sl_objetivo_entry:.4f} | aplicado: ${sl_precio:.4f}",
+                        120
+                    )
                     
                     success, already_protected = crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad))
                     
                     if success:
                         log(f"✅ SL de emergencia creado para {symbol}")
                         _sl_verificados[symbol] = time.time()
+                        _sl_retry_cooldown_until.pop(symbol, None)
                     elif already_protected:
                         if existe_orden_sl_abierta(client, symbol):
                             _sl_verificados[symbol] = time.time()
+                            _sl_retry_cooldown_until.pop(symbol, None)
                         else:
-                            log(f"⚠️ {symbol}: -4045 reportado pero no se encontró SL activa. Reintento en próximo ciclo.")
+                            _sl_retry_cooldown_until[symbol] = time.time() + SL_REINTENTO_COOLDOWN
+                            log_throttled(
+                                f"sl_4045_no_active_{symbol}",
+                                f"⚠️ {symbol}: -4045 reportado pero no se encontró SL activa. Cooldown {int(SL_REINTENTO_COOLDOWN/60)} min.",
+                                120
+                            )
                     else:
-                        log(f"⛔ SL NO CREADO para {symbol}. Se reintentará en 30s.")
+                        _sl_retry_cooldown_until[symbol] = time.time() + SL_REINTENTO_COOLDOWN
+                        log_throttled(
+                            f"sl_not_created_{symbol}",
+                            f"⛔ SL NO CREADO para {symbol}. Cooldown {int(SL_REINTENTO_COOLDOWN/60)} min.",
+                            120
+                        )
                     
             except Exception as e:
                 log(f"⚠️ Error verificando SL de {symbol}: {e}")
@@ -1600,7 +1681,7 @@ def verificar_ordenes_sl_existen(client):
 def verificar_tiempo_posiciones(client):
     """Cierra posiciones que excedan MAX_DIAS_POSICION días"""
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         
         for pos in positions:
             symbol = pos['symbol']
@@ -1663,7 +1744,7 @@ def verificar_tiempo_posiciones(client):
 def verificar_funding_vs_pnl(client):
     """Cierra posiciones donde los funding fees superan las ganancias"""
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         
         for pos in positions:
             symbol = pos['symbol']
@@ -1718,7 +1799,7 @@ def verificar_funding_vs_pnl(client):
 def ajustar_tp_dinamico(client):
     """Reduce el TP después de X días para asegurar ganancias"""
     try:
-        positions = client.futures_position_information()
+        positions = obtener_posiciones(client)
         
         for pos in positions:
             symbol = pos['symbol']
@@ -1779,7 +1860,7 @@ def ajustar_tp_dinamico(client):
                     
                     # Crear nuevo TP más cercano
                     try:
-                        info = client.futures_exchange_info()
+                        info = obtener_exchange_info(client)
                         symbol_info = next((s for s in info['symbols'] if s['symbol'] == symbol), None)
                         if symbol_info:
                             price_precision = int(symbol_info['pricePrecision'])
@@ -1827,7 +1908,7 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
         # Configurar TP y SL iniciales
         if tp and sl:
             # Obtener precisión del precio
-            info = client.futures_exchange_info()
+            info = obtener_exchange_info(client)
             symbol_info = next((s for s in info['symbols'] if s['symbol'] == symbol), None)
             if symbol_info:
                 price_precision = int(symbol_info['pricePrecision'])
@@ -1889,6 +1970,22 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
 # VERIFICAR POSICIONES CERRADAS (P&L)
 # ═══════════════════════════════════════════════════════════════════════════════
 posiciones_notificadas = set()
+
+
+def inicializar_cache_trades(client, limit=50):
+    """Carga trades ya existentes al iniciar para no re-loguear historial antiguo."""
+    global posiciones_notificadas
+    try:
+        trades = client.futures_account_trades(limit=limit)
+        for trade in trades:
+            pnl = float(trade.get('realizedPnl', 0))
+            if pnl == 0:
+                continue
+            unique_key = f"{trade.get('orderId', '')}_{trade.get('symbol', '')}_{pnl}"
+            posiciones_notificadas.add(unique_key)
+        log(f"📦 Cache de trades inicializada: {len(posiciones_notificadas)} eventos previos")
+    except Exception as e:
+        log(f"⚠️ Error inicializando cache de trades: {e}")
 
 def verificar_posiciones_cerradas(client):
     """
@@ -2074,12 +2171,6 @@ def ejecutar_trading(client, gemini_client):
     log("\n" + "="*60)
     log("🧠 GEMINI 2.0 + FEAR & GREED: Iniciando ciclo de análisis...")
     log("="*60)
-    
-    # Verificar posiciones cerradas
-    verificar_posiciones_cerradas(client)
-    
-    # Actualizar Trailing SL de posiciones existentes
-    actualizar_trailing_sl(client)
     
     try:
         saldo = obtener_balance(client)
@@ -2401,7 +2492,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 🆕 *FUNCIONES V5.0:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
-⏱️ Temporalidades: `15m, 30m, 1h, 4h`
+⏱️ Temporalidades: `{', '.join(TEMPORALIDADES)}`
 🎭 Fear & Greed: `{fg_valor} ({fg_clasificacion})`
 
 💸 *PROTECCIÓN FUNDING FEES:* 🟢 ACTIVA
@@ -2461,6 +2552,9 @@ stats_semanales["balance_inicio_semana"] = saldo
 # Marcar que no se ha enviado resumen aún (None = nunca enviado)
 stats_semanales["ultimo_resumen"] = None
 
+# Evitar re-procesar trades históricos al reiniciar contenedor
+inicializar_cache_trades(client)
+
 # Inicializar tracking de posiciones existentes
 pos_iniciales = contar_posiciones_abiertas(client)
 if pos_iniciales > 0:
@@ -2501,20 +2595,19 @@ while True:
         puede_operar = verificar_drawdown_diario(balance_actual)
         
         # ═════════════════════════════════════════════════════════════════════
-        # GUARDIAN SYSTEM - Monitoreo cada ciclo (protección de emergencia)
-        # Cierra posiciones automáticamente si la pérdida supera -10%
-        # El Guardian SIEMPRE corre, incluso si el bot está pausado por drawdown
+        # SCHEDULER OPERATIVO - control de carga CPU/API
         # ═════════════════════════════════════════════════════════════════════
-        if GUARDIAN_ACTIVO:
-            guardian_posiciones(client)       # Verificar pérdidas excesivas
-            verificar_ordenes_sl_existen(client)  # Verificar que existan órdenes SL
-        
-        # ═════════════════════════════════════════════════════════════════════
-        # TRAILING STOP LOSS + ESTADÍSTICAS
-        # Actualiza trailing SL y acumula stats de posiciones cerradas
-        # ═════════════════════════════════════════════════════════════════════
-        actualizar_trailing_sl(client)        # Mover SL hacia arriba si hay ganancia
-        verificar_posiciones_cerradas(client)  # Acumular stats en stats_semanales
+        if GUARDIAN_ACTIVO and should_run_task("guardian", INTERVALO_GUARDIAN):
+            guardian_posiciones(client)
+
+        if GUARDIAN_ACTIVO and should_run_task("verificar_sl", INTERVALO_VERIFICAR_SL):
+            verificar_ordenes_sl_existen(client)
+
+        if should_run_task("trailing", INTERVALO_TRAILING):
+            actualizar_trailing_sl(client)
+
+        if should_run_task("trades_cerrados", INTERVALO_TRADES_CERRADOS):
+            verificar_posiciones_cerradas(client)
         
         # ═════════════════════════════════════════════════════════════════════
         # RESUMEN SEMANAL - Solo viernes a las 18:00 (V3.0)
@@ -2559,12 +2652,10 @@ while True:
                 log("⏸️ Trading pausado por protección de drawdown diario")
             ciclo_analisis = 0
         else:
-            # V2.8: Log de monitoreo cada 5 min para salvar recursos
-            mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
-            if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
+            # Log de monitoreo controlado por intervalo para evitar ruido
+            if should_run_task("log_monitoreo", INTERVALO_RESUMEN_POSICIONES) or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
                 log(f"👁️ Monitoreo V5.0... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
-                # V3.9: Resumen detallado de posiciones cada ~5 min
                 if pos_abiertas > 0:
                     log_resumen_posiciones(client)
         
