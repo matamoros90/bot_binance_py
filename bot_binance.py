@@ -31,7 +31,7 @@ MAX_POSICIONES = 3        # Máximo 3 posiciones simultáneas (V3.4: reducido pa
 # TRAILING STOP LOSS CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
 TRAILING_SL_PERCENT = 0.015  # 1.5% - distancia del trailing
-MONITOREO_INTERVALO = 30     # 30s - balance entre reacción rápida y recursos
+MONITOREO_INTERVALO = int(os.getenv("MONITOREO_INTERVALO", "30"))  # 30s default
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
 # Scheduler de tareas para controlar carga de CPU/API
@@ -122,7 +122,7 @@ TP_DINAMICO_PERCENT = 0.02      # TP reducido a 2% después de X días
 # ═══════════════════════════════════════════════════════════════════════════════
 GUARDIAN_ACTIVO = True          # Activar sistema guardián
 MAX_PERDIDA_PERMITIDA = -0.07   # V3.8: -7% cierre obligatorio (antes -10%)
-LOG_DETALLADO = True            # Logs completos, sin errores silenciosos
+LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
