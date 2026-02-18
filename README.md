@@ -6,11 +6,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 14/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 18/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V5.0 Reset Inteligente                 |
+| **Versión**    | V5.0 + Salvaguardas V5.1               |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -31,41 +31,119 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🎯 Roadmap V3.0 - Optimización para ROI 100% en 4 Meses
+## ✅ Actualización aplicada (18/02/2026)
 
-### Objetivos V3.0
+Se implementaron en código los **5 hallazgos prioritarios** detectados en revisión técnica:
 
-| Métrica            | Actual            | Objetivo V3.0                   |
-| ------------------ | ----------------- | ------------------------------- |
-| **ROI en 4 meses** | ~76% (proyectado) | **100%**                        |
-| **ROI diario**     | ~1.0%             | **≥1.0%** (mantener o superar)  |
-| **Win-Rate**       | ~55% (estimado)   | **≥60%**                        |
-| **Risk-Reward**    | 1:1.5 (estimado)  | **≥1:2.5**                      |
-| **Prioridad**      | Buscar ganancias  | **Evitar pérdidas > Ganancias** |
+1. **Filtro anti-tendencia corregido** (error de mayúsculas/minúsculas).
+2. **Funding protection completada en el loop principal**:
+   - cierre por tiempo máximo,
+   - cierre por funding > PNL,
+   - ajuste de TP dinámico.
+3. **SL de emergencia mejorado**:
+   - anclado a `entry_price`,
+   - ajustado a nivel válido vs `mark_price` para evitar rechazos.
+4. **Manejo de `-4045` endurecido**:
+   - ya no se asume protección automática,
+   - se revalida que exista una orden SL activa real.
+5. **Observabilidad y coherencia de versión**:
+   - logs/mensajes actualizados a V5.0.
 
-### Indicadores Técnicos a Implementar
+Además se aplicó parte del roadmap para reducir el componente impredecible (~40%):
 
-| Indicador             | Para Qué Sirve                    | Impacto en ROI                |
-| --------------------- | --------------------------------- | ----------------------------- |
-| RSI(14)               | Detectar sobrecompra/sobreventa   | +15-20% win-rate              |
-| EMA 20/50/200         | Confirmar tendencia               | Evita trades contra-tendencia |
-| MACD                  | Momentum y cruces                 | Mejores entradas              |
-| Bandas Bollinger      | Volatilidad + extremos            | Entradas en retrocesos        |
-| ATR                   | Volatilidad real para SL dinámico | SL más inteligentes           |
-| Volumen               | Confirmar movimientos             | Evita falsas rupturas         |
-| Soportes/Resistencias | Zonas clave                       | Mejor timing                  |
+- ✅ **V5.1 #1 Noticias en tiempo real**: pausa automática por titulares de alto impacto.
+- ✅ **V5.1 #4 Horarios de protección**: ventanas macro USA + ventana FED.
 
-### Gestión de Riesgo Avanzada (Planificado)
+Pendiente de implementación (roadmap):
 
-| Feature                   | Descripción                | Beneficio          |
-| ------------------------- | -------------------------- | ------------------ |
-| Position Sizing por Kelly | % óptimo según win-rate    | Maximiza compuesto |
-| Drawdown máximo diario    | -5% máximo, pausar bot     | Protege capital    |
-| Correlación de posiciones | No abrir 3 correlacionadas | Diversifica riesgo |
-| Win-rate tracking         | Si < 50%, reducir riesgo   | Auto-ajuste        |
+- ⏳ V5.2: Liquidation Heatmap, Open Interest/Order Flow, Multi-timeframe confirmation, Position sizing dinámico por volatilidad, Correlación de posiciones.
+- ⏳ V6.0: ML sobre historial propio y Whale tracking.
+
+---
+
+## 🎯 Roadmap V6.0 — Reducir el Factor de Imprevisibilidad del Mercado
+
+> [!NOTE]
+> **Contexto**: V5.0 acertará ~60% de las decisiones basándose en datos técnicos (precio, EMA, RSI, F&G).
+> El ~40% restante son eventos que la IA no puede predecir: flash crashes, manipulación de ballenas,
+> noticias imprevistas, cascadas de liquidaciones. Las siguientes mejoras buscan **reducir ese 40% al ~15-18%**.
 
 > [!IMPORTANT]
-> V3.0 está en fase de planificación. Las mejoras se implementarán de forma gradual.
+> **Plan**: Dejar V5.0 operar **1-2 semanas** para recopilar datos reales, analizar resultados, y luego
+> implementar estas mejoras de forma gradual.
+
+### 📊 Impacto Estimado por Mejora
+
+| #   | Mejora                                   | Reduce riesgo a... | Dificultad     | Prioridad |
+| --- | ---------------------------------------- | ------------------ | -------------- | --------- |
+| 1   | Noticias en tiempo real                  | ~32%               | ⭐ Fácil       | 🔴 Alta   |
+| 2   | Liquidation Heatmap                      | ~26%               | ⭐⭐ Media     | 🔴 Alta   |
+| 3   | Order Flow / Open Interest               | ~23%               | ⭐⭐ Media     | 🟡 Media  |
+| 4   | Horarios de protección                   | ~22%               | ⭐ Fácil       | 🟡 Media  |
+| 5   | Multi-timeframe confirmation             | ~20%               | ⭐⭐ Media     | 🟡 Media  |
+| 6   | Position sizing dinámico por volatilidad | ~18%               | ⭐⭐ Media     | 🟡 Media  |
+| 7   | Correlación de posiciones                | ~16%               | ⭐⭐ Media     | 🟢 Normal |
+| 8   | Machine Learning sobre historial propio  | ~12-15%            | ⭐⭐⭐ Difícil | 🟢 Normal |
+| 9   | Whale tracking (on-chain)                | ~10-12%            | ⭐⭐⭐ Difícil | 🔵 Futura |
+
+### 🟢 Fase 1 — Fáciles (V5.1)
+
+**1. Noticias en tiempo real** 📰
+
+- API: CryptoPanic o CoinGecko News
+- Si detecta palabras clave de alto impacto (SEC, hack, ban, crash, FED) → PAUSA automática 2h
+- Evita el 60-70% de flash crashes causados por noticias
+
+**4. Horarios de protección** ⏰
+
+- Miércoles de FED → bot en modo WAIT automático
+- 8:30-9:30 AM EST → alta volatilidad por datos económicos USA
+- Evita operar en los momentos más manipulados del mercado
+
+### 🟡 Fase 2 — Intermedias (V5.2)
+
+**2. Liquidation Heatmap** 🔥
+
+- API: Coinglass (datos de liquidaciones pendientes)
+- Si hay >$500M en liquidaciones a ±3% del precio → WAIT
+- Las cascadas de liquidaciones causan los movimientos más violentos
+
+**3. Order Flow / Open Interest** 📊
+
+- Monitorear Open Interest en futuros de Binance
+- OI sube >5% en 1h pero precio baja → NO LONG (señal de liquidación inminente)
+- OI cae >5% rápido → mercado desapalancándose → WAIT
+
+**5. Multi-timeframe confirmation** 📐
+
+- LONG en 1h → Solo si 4h también es alcista Y 1d no es bajista
+- Elimina trades que van bien en corto plazo pero contra la tendencia mayor
+
+**6. Position sizing dinámico por volatilidad** 📏
+
+- Volatilidad alta (>8%): Usar 50% del monto normal
+- Volatilidad normal (4-8%): Usar 100%
+- Volatilidad baja (<4%): Usar 75% (poco movimiento = poco profit)
+
+**7. Correlación de posiciones** 🔗
+
+- Si 2 posiciones LONG abiertas → 3ra requiere confianza >85%
+- Si 3 posiciones en misma dirección → NO abrir más
+- Evita el "triple golpe" cuando todo el mercado cae junto
+
+### 🔴 Fase 3 — Avanzadas (V6.0)
+
+**8. Machine Learning sobre historial propio** 🧠
+
+- Guardar CADA trade con todos los indicadores del momento
+- Entrenar modelo que detecte patrones en trades perdedores
+- El bot aprende de SUS PROPIOS errores, no de teoría
+
+**9. Whale tracking (on-chain)** 🐋
+
+- Monitorear wallets de ballenas conocidas
+- Whale mueve >5,000 BTC a exchange → probable venta → WAIT
+- Whale retira BTC de exchange → probable hold → señal alcista
 
 ---
 
@@ -310,6 +388,7 @@ BINANCE_TESTNET=True  # True para testnet, False para producción
 API_KEY_GEMINI=tu_gemini_api_key
 TELEGRAM_TOKEN=tu_bot_token
 TELEGRAM_CHAT_ID=tu_chat_id
+CRYPTOPANIC_API_KEY=tu_cryptopanic_api_key  # Opcional, recomendado para pausa por noticias
 ```
 
 ## 🚀 Despliegue

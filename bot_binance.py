@@ -6,9 +6,10 @@
 from binance.client import Client
 from binance.enums import *
 import time, os, http.server, socketserver, threading, requests, json, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from google import genai
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
@@ -133,6 +134,34 @@ TP_SL_CONFIG = {
 FEAR_GREED_API = "https://api.alternative.me/fng/"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PROTECCIONES V5.1 - REDUCCIÓN DE EVENTOS IMPREDECIBLES
+# ═══════════════════════════════════════════════════════════════════════════════
+NOTICIAS_PROTECCION_ACTIVA = True
+CRYPTO_PANIC_URL = "https://cryptopanic.com/api/v1/posts/"
+CRYPTO_PANIC_KEY = os.getenv("CRYPTOPANIC_API_KEY")
+PAUSA_NOTICIAS_MINUTOS = 120
+NOTICIAS_CHECK_INTERVALO = 300  # 5 min
+NOTICIAS_KEYWORDS_ALTO_IMPACTO = (
+    "sec", "hack", "exploit", "ban", "lawsuit", "fed", "fomc", "cpi",
+    "liquidation", "liquidations", "bankruptcy", "crash", "etf denied",
+    "exchange halted", "outage", "default", "war", "sanction"
+)
+
+HORARIO_PROTEGIDO_ACTIVO = True
+try:
+    TZ_MERCADO = ZoneInfo("America/New_York")
+except Exception:
+    TZ_MERCADO = None
+VENTANA_USA_INICIO_MIN = 8 * 60 + 30   # 08:30 ET
+VENTANA_USA_FIN_MIN = 9 * 60 + 30      # 09:30 ET
+VENTANA_FED_DIA = 2                    # Miércoles
+VENTANA_FED_INICIO_MIN = 13 * 60 + 45  # 13:45 ET
+VENTANA_FED_FIN_MIN = 14 * 60 + 30     # 14:30 ET
+
+pausa_noticias_hasta = None
+ultimo_check_noticias = 0.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # SERVIDOR DE SALUD (KOYEB)
 # ═══════════════════════════════════════════════════════════════════════════════
 def servidor_salud():
@@ -178,6 +207,92 @@ def obtener_fear_greed():
         return valor, clasificacion
     except:
         return 50, "Neutral"  # Default si falla
+
+
+def _en_rango_minutos(actual_min, inicio_min, fin_min):
+    return inicio_min <= actual_min <= fin_min
+
+
+def es_horario_protegido():
+    """Evita ventanas con volatilidad macro elevada (hora ET)."""
+    if not HORARIO_PROTEGIDO_ACTIVO:
+        return False, ""
+    if not TZ_MERCADO:
+        return False, ""
+    try:
+        ahora_et = datetime.now(TZ_MERCADO)
+        actual_min = ahora_et.hour * 60 + ahora_et.minute
+
+        if _en_rango_minutos(actual_min, VENTANA_USA_INICIO_MIN, VENTANA_USA_FIN_MIN):
+            return True, "Ventana macro USA 08:30-09:30 ET"
+
+        if ahora_et.weekday() == VENTANA_FED_DIA and _en_rango_minutos(actual_min, VENTANA_FED_INICIO_MIN, VENTANA_FED_FIN_MIN):
+            return True, "Ventana FOMC/FED 13:45-14:30 ET (miércoles)"
+
+        return False, ""
+    except Exception as e:
+        if LOG_DETALLADO:
+            log(f"⚠️ Error validando horario protegido: {e}")
+        return False, ""
+
+
+def _es_noticia_reciente(published_at_iso, max_min=180):
+    try:
+        fecha_pub = datetime.fromisoformat(published_at_iso.replace("Z", "+00:00"))
+        return (datetime.now(fecha_pub.tzinfo) - fecha_pub).total_seconds() <= max_min * 60
+    except Exception:
+        return True
+
+
+def detectar_noticia_alto_impacto():
+    """Consulta CryptoPanic y detecta noticias con palabras de alto impacto."""
+    if not NOTICIAS_PROTECCION_ACTIVA or not CRYPTO_PANIC_KEY:
+        return False, ""
+    try:
+        params = {
+            "auth_token": CRYPTO_PANIC_KEY,
+            "kind": "news",
+            "public": "true",
+            "currencies": "BTC,ETH,SOL,BNB,XRP"
+        }
+        response = requests.get(CRYPTO_PANIC_URL, params=params, timeout=10)
+        data = response.json() if response.ok else {}
+        for post in data.get("results", [])[:15]:
+            titulo = (post.get("title") or "").lower()
+            if not _es_noticia_reciente(post.get("published_at", "")):
+                continue
+            if any(keyword in titulo for keyword in NOTICIAS_KEYWORDS_ALTO_IMPACTO):
+                return True, post.get("title", "Noticia de alto impacto detectada")
+        return False, ""
+    except Exception as e:
+        if LOG_DETALLADO:
+            log(f"⚠️ Error consultando noticias: {e}")
+        return False, ""
+
+
+def en_pausa_por_noticias():
+    """Activa una pausa temporal si se detecta evento noticioso de alto impacto."""
+    global pausa_noticias_hasta, ultimo_check_noticias
+
+    if not NOTICIAS_PROTECCION_ACTIVA:
+        return False, ""
+
+    ahora = datetime.now()
+    if pausa_noticias_hasta and ahora < pausa_noticias_hasta:
+        mins_restantes = int((pausa_noticias_hasta - ahora).total_seconds() / 60)
+        return True, f"Pausa por noticias activa ({mins_restantes} min restantes)"
+
+    if time.time() - ultimo_check_noticias < NOTICIAS_CHECK_INTERVALO:
+        return False, ""
+
+    ultimo_check_noticias = time.time()
+    detectado, titular = detectar_noticia_alto_impacto()
+    if detectado:
+        pausa_noticias_hasta = ahora + timedelta(minutes=PAUSA_NOTICIAS_MINUTOS)
+        log(f"📰 Noticia de alto impacto detectada. Pausa de trading por {PAUSA_NOTICIAS_MINUTOS} min.")
+        log(f"📰 Titular: {titular}")
+        return True, "Pausa por noticia de alto impacto"
+    return False, ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # INDICADORES TÉCNICOS V3.0 - Para mejorar decisiones de IA
@@ -1071,6 +1186,30 @@ def cancelar_ordenes_sl(client, symbol):
         if LOG_DETALLADO:
             log(f"⚠️ Error cancelando órdenes SL de {symbol}: {e}")
 
+
+def existe_orden_sl_abierta(client, symbol):
+    """Verifica si hay al menos una orden de stop activa para el símbolo."""
+    try:
+        ordenes = client.futures_get_open_orders(symbol=symbol)
+        for orden in ordenes:
+            if 'STOP' in (orden.get('type', '') or '').upper():
+                return True
+    except Exception:
+        pass
+
+    try:
+        algo_ordenes = client.futures_get_open_algo_orders()
+        if algo_ordenes:
+            for orden in algo_ordenes:
+                if orden.get('symbol') != symbol:
+                    continue
+                if 'STOP' in (orden.get('type', '') or '').upper():
+                    return True
+    except Exception:
+        pass
+
+    return False
+
 def crear_orden_sl(client, symbol, side, precio, cantidad):
     """V5.0: Crea SL con orden STOP_MARKET tradicional (método principal)
     Returns: tuple (success: bool, already_protected: bool)
@@ -1099,6 +1238,8 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
         except Exception as trad_error:
             trad_str = str(trad_error)
             if '-4045' in trad_str:
+                if LOG_DETALLADO:
+                    log(f"   ⚠️ {symbol}: Binance reporta -4045 al crear SL tradicional")
                 return False, True  # already_protected
             
             # Fallback: Algo Order API
@@ -1114,6 +1255,8 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
                 return True, False
             except Exception as algo_error:
                 if '-4045' in str(algo_error):
+                    if LOG_DETALLADO:
+                        log(f"   ⚠️ {symbol}: Binance reporta -4045 también en Algo Order")
                     return False, True
                 log(f"   ⚠️ Algo Order también falló: {algo_error}")
                 return False, False
@@ -1419,14 +1562,18 @@ def verificar_ordenes_sl_existen(client):
                 if not tiene_sl:
                     # V4.0 FIX: SL emergencia a -3% (antes -7%) — Guardian sigue como red de seguridad a -7%
                     SL_EMERGENCIA_PERCENT = 0.03  # -3% es más razonable que -7%
+                    # V5.1: anclar primero al entry para preservar riesgo previsto,
+                    # y ajustar a un nivel válido vs mark para evitar rechazo inmediato.
                     if side == 'LONG':
-                        sl_precio = mark_price * (1 - SL_EMERGENCIA_PERCENT)
+                        sl_objetivo_entry = entry_price * (1 - SL_EMERGENCIA_PERCENT)
+                        sl_precio = min(sl_objetivo_entry, mark_price * 0.995)
                         sl_side = 'SELL'
                     else:
-                        sl_precio = mark_price * (1 + SL_EMERGENCIA_PERCENT)
+                        sl_objetivo_entry = entry_price * (1 + SL_EMERGENCIA_PERCENT)
+                        sl_precio = max(sl_objetivo_entry, mark_price * 1.005)
                         sl_side = 'BUY'
                     
-                    log(f"⚠️ {symbol} SIN orden SL válida. Creando SL emergencia -3% a ${sl_precio:.4f}")
+                    log(f"⚠️ {symbol} SIN orden SL válida. SL emergencia objetivo(entry): ${sl_objetivo_entry:.4f} | aplicado: ${sl_precio:.4f}")
                     
                     success, already_protected = crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad))
                     
@@ -1434,7 +1581,10 @@ def verificar_ordenes_sl_existen(client):
                         log(f"✅ SL de emergencia creado para {symbol}")
                         _sl_verificados[symbol] = time.time()
                     elif already_protected:
-                        _sl_verificados[symbol] = time.time()
+                        if existe_orden_sl_abierta(client, symbol):
+                            _sl_verificados[symbol] = time.time()
+                        else:
+                            log(f"⚠️ {symbol}: -4045 reportado pero no se encontró SL activa. Reintento en próximo ciclo.")
                     else:
                         log(f"⛔ SL NO CREADO para {symbol}. Se reintentará en 30s.")
                     
@@ -1874,7 +2024,7 @@ def enviar_resumen_semanal(client):
         # ═══════════════════════════════════════════════════════════════════
         # CONSTRUIR MENSAJE DE TELEGRAM
         # ═══════════════════════════════════════════════════════════════════
-        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V3.9*
+        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V5.0*
 📅 Fecha: {fecha_actual}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -1897,7 +2047,7 @@ def enviar_resumen_semanal(client):
 � *ROI Semanal:* `{roi_semanal:.2f}%`
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Bot Binance V3.9 Activo ✅"""
+🤖 Bot Binance V5.0 Activo ✅"""
         
         # Enviar mensaje por Telegram
         enviar_telegram(mensaje)
@@ -2098,12 +2248,12 @@ JSON (solo esto, sin explicación adicional):
                     confianza = 0
                 
                 # REGLA 2: NO operar CONTRA la tendencia EMA dominante
-                tendencia_ema = indicadores.get('tendencia_ema', '')
-                if 'Alcista' in tendencia_ema and accion == "SHORT":
+                tendencia_ema = (indicadores.get('tendencia_ema', '') or '').upper()
+                if 'ALCISTA' in tendencia_ema and accion == "SHORT":
                     log(f"   ⛔ V5.0 REGLA: SHORT rechazado en tendencia ALCISTA ({tendencia_ema})")
                     accion = "WAIT"
                     confianza = 0
-                elif 'Bajista' in tendencia_ema and accion == "LONG":
+                elif 'BAJISTA' in tendencia_ema and accion == "LONG":
                     log(f"   ⛔ V5.0 REGLA: LONG rechazado en tendencia BAJISTA ({tendencia_ema})")
                     accion = "WAIT"
                     confianza = 0
@@ -2248,7 +2398,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V3.9:*
+🆕 *FUNCIONES V5.0:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `15m, 30m, 1h, 4h`
@@ -2269,7 +2419,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V3.9...")
+log("🚀 Iniciando Bot Binance Futuros V5.0...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2321,14 +2471,14 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V3.9 iniciado. Guardian System + SL Coherence + Resumen Semanal activos...")
+log("✅ Bot V5.0 iniciado. Guardian + SL Coherence + Resumen Semanal activos...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN + RESUMEN SEMANAL
 # ═══════════════════════════════════════════════════════════════════════════════
 # Contador de ciclos para decidir cuándo hacer análisis completo
 ciclo_analisis = 0
-# Cada 4 ciclos de monitoreo (4 * 60s = 4 min) hacer análisis completo de mercado
+# Cada 4 ciclos de monitoreo (4 * 30s = 2 min) hacer análisis completo de mercado
 CICLOS_PARA_ANALISIS = 4
 # Variable para controlar que solo se envíe 1 resumen por viernes
 resumen_enviado_esta_hora = False
@@ -2379,9 +2529,11 @@ while True:
             # Resetear la bandera cuando ya no sea viernes 18h
             resumen_enviado_esta_hora = False
         
-        # Protección contra Funding Fees
-        if FUNDING_PROTECTION:
+        # Protección contra Funding Fees (cada ciclo de análisis para evitar spam API)
+        if FUNDING_PROTECTION and ciclo_analisis >= CICLOS_PARA_ANALISIS:
             verificar_tiempo_posiciones(client)
+            verificar_funding_vs_pnl(client)
+            ajustar_tp_dinamico(client)
         
         # ═════════════════════════════════════════════════════════════════════
         # V3.0: TRADING - Solo si NO estamos pausados por drawdown
@@ -2389,12 +2541,20 @@ while True:
         # Cada N ciclos, hacer análisis completo de mercado
         if ciclo_analisis >= CICLOS_PARA_ANALISIS:
             if puede_operar:
-                # V3.9: Solo entrar a ejecutar_trading si hay espacios disponibles
-                pos_activas = contar_posiciones_abiertas(client)
-                if pos_activas < MAX_POSICIONES:
-                    ejecutar_trading(client, gemini_client)
+                en_horario_bloqueado, motivo_horario = es_horario_protegido()
+                en_pausa_noticias_activa, motivo_noticias = en_pausa_por_noticias()
+
+                if en_horario_bloqueado:
+                    log(f"⏸️ Trading pausado por horario protegido: {motivo_horario}")
+                elif en_pausa_noticias_activa:
+                    log(f"⏸️ Trading pausado por noticias: {motivo_noticias}")
                 else:
-                    log(f"📊 {pos_activas}/{MAX_POSICIONES} posiciones activas. Sin análisis IA.")
+                    # V3.9: Solo entrar a ejecutar_trading si hay espacios disponibles
+                    pos_activas = contar_posiciones_abiertas(client)
+                    if pos_activas < MAX_POSICIONES:
+                        ejecutar_trading(client, gemini_client)
+                    else:
+                        log(f"📊 {pos_activas}/{MAX_POSICIONES} posiciones activas. Sin análisis IA.")
             else:
                 log("⏸️ Trading pausado por protección de drawdown diario")
             ciclo_analisis = 0
@@ -2403,7 +2563,7 @@ while True:
             mod_log = (CICLOS_PARA_ANALISIS - ciclo_analisis)
             if ciclo_analisis % LOG_FRECUENCIA_MONITOREO == 0 or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V3.9... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo V5.0... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
                 # V3.9: Resumen detallado de posiciones cada ~5 min
                 if pos_abiertas > 0:
                     log_resumen_posiciones(client)
