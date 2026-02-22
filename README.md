@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V5.2 - Interés Compuesto + Fix SL -4045 + Optimizaciones
+# 🤖 Bot Binance Futures V5.3 - Multi-Timeframe + SQLite + Métricas de Riesgo
 
 ## 📋 Descripción
 
@@ -10,7 +10,7 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V5.2                                   |
+| **Versión**    | V5.3                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -28,6 +28,34 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 > [!NOTE]
 > V3.7 incluye fixes críticos para evitar pérdidas por SL demasiado cercanos y errores de API.
+
+---
+
+## ✅ Actualización V5.3 (22/02/2026)
+
+Mejora de arquitectura completa con **3 pilares**: mejor calidad de análisis, persistencia de datos, y métricas profesionales.
+
+### 🧠 Multi-Timeframe + Prompt Enriquecido
+
+1. **Análisis dual 1h + 4h**: Se descargan velas de ambas temporalidades y se calculan los 14 indicadores para cada una. Gemini recibe ambos conjuntos.
+2. **Prompt enriquecido**: Gemini ahora recibe **14 indicadores** (antes solo 7): RSI, EMA, MACD, Bollinger, ATR, volumen relativo, soporte/resistencia. Más las **últimas 50 velas crudas** para detección de patrones (dojis, envolventes, divergencias).
+3. **Pre-filtro inteligente**: Antes de llamar a Gemini, el código descarta símbolos con RSI neutral + tendencia lateral + rango medio. Ahorra ~50% de llamadas API.
+4. **Penalización cruzada**: Si 4h contradice la dirección de 1h, la confianza se reduce 30% automáticamente.
+
+### 💾 SQLite + Persistencia
+
+5. **Base de datos SQLite** (`persistence.py`): Registra cada trade abierto/cerrado, cada decisión de Gemini, y balances diarios. Datos sobreviven reinicios de Koyeb.
+6. **Resumen diario automático**: Todos los días a las 22:00 envía por Telegram balance, PNL del día, y métricas de riesgo.
+
+### 📊 Métricas de Riesgo Profesionales
+
+7. **Métricas calculadas automáticamente** a partir de la BD:
+   - **Win Rate**: % de trades ganadores
+   - **Profit Factor**: ganancias totales / pérdidas totales (>1.5 = viable)
+   - **Sharpe Ratio**: retorno ajustado por riesgo (>1.0 = bueno)
+   - **Max Drawdown**: mayor caída pico a valle
+   - **Expected Value**: valor esperado por trade
+8. **Evaluación de viabilidad para Mainnet**: El resumen incluye una evaluación automática que indica si el bot cumple los mínimos para operar con dinero real.
 
 ---
 

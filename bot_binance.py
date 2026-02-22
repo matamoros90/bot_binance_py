@@ -1,6 +1,6 @@
 # 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
 # Trading 24/7 de Criptomonedas con IA
-# V5.0 - Reset Inteligente: Prompt Simple + SL Amplio + Anti-Tendencia
+# V5.3 - Multi-Timeframe + Prompt Enriquecido + SQLite + Métricas de Riesgo
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from google import genai
 from zoneinfo import ZoneInfo
+from persistence import (
+    inicializar_db, registrar_trade_abierto, registrar_trade_cerrado,
+    registrar_decision, registrar_balance_diario, calcular_metricas_riesgo,
+    obtener_datos_kelly, generar_resumen_metricas
+)
 
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
@@ -2074,6 +2079,13 @@ def verificar_posiciones_cerradas(client):
             # V3.0: Actualizar también estadísticas diarias (para Kelly Criterion)
             actualizar_stats_trade(pnl)
             
+            # V5.3: Registrar trade cerrado en SQLite
+            try:
+                registrar_trade_cerrado(symbol, pnl)
+            except Exception as db_err:
+                if LOG_DETALLADO:
+                    log(f"⚠️ Error registrando cierre en DB: {db_err}")
+            
             # V3.0: NO SE ENVÍA TELEGRAM INDIVIDUAL
             # Todas las estadísticas se incluyen en el resumen semanal del viernes
             
@@ -2087,19 +2099,57 @@ def verificar_posiciones_cerradas(client):
 def es_viernes_18h():
     """
     Verifica si es viernes a las 18:00 (hora local).
-    
-    Retorna:
-        bool: True si es viernes y la hora está entre 18:00 y 18:59
-    
-    Ejemplo de uso:
-        if es_viernes_18h():
-            enviar_resumen_semanal(client)
     """
     ahora = datetime.now()
-    # weekday() retorna: 0=Lunes, 1=Martes, ..., 4=Viernes, 5=Sábado, 6=Domingo
-    es_viernes = ahora.weekday() == 4  # 4 = Viernes
-    es_hora_18 = ahora.hour == 18      # Hora 18 (6 PM)
+    es_viernes = ahora.weekday() == 4
+    es_hora_18 = ahora.hour == 18
     return es_viernes and es_hora_18
+
+
+# V5.3: Resumen diario a las 22:00
+_resumen_diario_enviado = False
+
+def es_hora_resumen_diario():
+    """Verifica si es hora de enviar el resumen diario (22:00)."""
+    return datetime.now().hour == 22
+
+def enviar_resumen_diario(client):
+    """V5.3: Envía resumen diario con balance, PNL y métricas de riesgo."""
+    try:
+        fecha = datetime.now().strftime("%d/%m/%Y")
+        balance = obtener_balance(client)
+        
+        # Registrar balance fin de día
+        registrar_balance_diario(datetime.now().strftime("%Y-%m-%d"), balance_fin=balance)
+        
+        # Obtener métricas
+        metricas_texto = generar_resumen_metricas()
+        
+        pnl_dia = stats_diarias.get('pnl_dia', 0)
+        emoji_dia = "📈" if pnl_dia >= 0 else "📉"
+        
+        mensaje = f"""📊 *RESUMEN DIARIO V5.3*
+📅 {fecha}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+💵 *Balance:* `${balance:.2f}`
+{emoji_dia} *PNL Hoy:* `${pnl_dia:+.2f}`
+
+{metricas_texto}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🤖 Bot Binance V5.3 Activo ✅"""
+        
+        enviar_telegram(mensaje)
+        log(f"📊 Resumen diario enviado: {fecha}")
+        
+        # Registrar balance inicio del nuevo día
+        registrar_balance_diario(
+            (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            balance_inicio=balance
+        )
+    except Exception as e:
+        log(f"⚠️ Error enviando resumen diario: {e}")
 
 def enviar_resumen_semanal(client):
     """
@@ -2209,7 +2259,14 @@ def enviar_resumen_semanal(client):
 📈 *ROI Semanal:* `{roi_semanal:.2f}%`
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Bot Binance V5.2 Activo ✅"""
+🤖 Bot Binance V5.3 Activo ✅"""
+        
+        # V5.3: Añadir métricas de riesgo al resumen
+        try:
+            metricas_texto = generar_resumen_metricas()
+            mensaje += f"\n\n{metricas_texto}"
+        except Exception:
+            pass
         
         # Enviar mensaje por Telegram
         enviar_telegram(mensaje)
@@ -2275,68 +2332,138 @@ def ejecutar_trading(client, gemini_client):
                 continue
                 
             try:
-                # Obtener velas con temporalidad 1h para análisis inicial
-                velas = obtener_velas(client, symbol, '1h', VELAS_CANTIDAD)
-                if not velas or len(velas) < 50:
+                # ═══════════════════════════════════════════════════════════════════
+                # V5.3: MULTI-TIMEFRAME — Descargar velas 1h Y 4h
+                # ═══════════════════════════════════════════════════════════════════
+                velas_1h = obtener_velas(client, symbol, '1h', VELAS_CANTIDAD)
+                if not velas_1h or len(velas_1h) < 50:
                     continue
                 
-                log(f"🧠 Analizando: {symbol}")
+                velas_4h = obtener_velas(client, symbol, '4h', 100)
+                
+                log(f"🧠 Analizando: {symbol} (1h: {len(velas_1h)} velas | 4h: {len(velas_4h) if velas_4h else 0} velas)")
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V3.0: CALCULAR TODOS LOS INDICADORES TÉCNICOS
+                # V5.3: CALCULAR 14 INDICADORES para AMBAS temporalidades
                 # ═══════════════════════════════════════════════════════════════════
-                # Convertir velas a formato para la función analizar_indicadores_completo
-                klines_format = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas]
-                indicadores = analizar_indicadores_completo(klines_format)
+                klines_1h = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas_1h]
+                ind_1h = analizar_indicadores_completo(klines_1h)
                 
-                if not indicadores:
+                ind_4h = None
+                if velas_4h and len(velas_4h) >= 50:
+                    klines_4h = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas_4h]
+                    ind_4h = analizar_indicadores_completo(klines_4h)
+                
+                if not ind_1h:
                     log(f"   ⚠️ No se pudieron calcular indicadores para {symbol}")
                     continue
                 
-                precio_actual = indicadores['precio_actual']
-                precios = [v['close'] for v in velas[-100:]]
-                precio_max = max(precios)
-                precio_min = min(precios)
-                volatilidad = ((precio_max - precio_min) / precio_actual) * 100
-                posicion_rango = ((precio_actual - precio_min) / (precio_max - precio_min) * 100) if precio_max != precio_min else 50
+                # Usar 1h como referencia principal
+                indicadores = ind_1h
+                precio_actual = ind_1h['precio_actual']
+                precios_1h = [v['close'] for v in velas_1h[-100:]]
+                precio_max_1h = max(precios_1h)
+                precio_min_1h = min(precios_1h)
+                volatilidad = ((precio_max_1h - precio_min_1h) / precio_actual) * 100
+                posicion_rango = ((precio_actual - precio_min_1h) / (precio_max_1h - precio_min_1h) * 100) if precio_max_1h != precio_min_1h else 50
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.0: PROMPT SIMPLE — Basado en el prompt de enero que logró 19% ROI
-                # La versión V3.0-V4.0 enviaba 20+ datos y 12 reglas contradictorias.
-                # Gemini toma MEJORES decisiones con datos simples y reglas claras.
+                # V5.3: PRE-FILTRO EN CÓDIGO — Ahorrar llamadas a Gemini
+                # Si no hay señal clara → skip sin gastar API
                 # ═══════════════════════════════════════════════════════════════════
+                rsi = ind_1h['rsi']
+                tendencia = (ind_1h.get('tendencia_ema', '') or '').upper()
+                
+                # Skip si RSI neutral + tendencia lateral + rango medio
+                if (40 < rsi < 60 and 'LATERAL' in tendencia and 35 < posicion_rango < 65):
+                    if LOG_DETALLADO:
+                        log(f"   ⏭️ {symbol}: Pre-filtro skip (RSI {rsi:.0f}, {tendencia}, rango {posicion_rango:.0f}%)")
+                    continue
+                
+                # ═══════════════════════════════════════════════════════════════════
+                # V5.3: PREPARAR ÚLTIMAS 50 VELAS CRUDAS para cotejo de patrones
+                # ═══════════════════════════════════════════════════════════════════
+                ultimas_50 = velas_1h[-50:]
+                velas_csv_lines = []
+                for v in ultimas_50:
+                    velas_csv_lines.append(
+                        f"{v['open']:.6f},{v['high']:.6f},{v['low']:.6f},{v['close']:.6f},{v['volume']:.0f}"
+                    )
+                velas_csv = "\n".join(velas_csv_lines)
+                
+                # ═══════════════════════════════════════════════════════════════════
+                # V5.3: PROMPT ENRIQUECIDO — 14 indicadores × 2 temporalidades
+                #        + 50 velas crudas para detección de patrones
+                # ═══════════════════════════════════════════════════════════════════
+                
+                # Bloque 4h (si disponible)
+                bloque_4h = ""
+                if ind_4h:
+                    precios_4h = [v['close'] for v in velas_4h[-50:]]
+                    vol_4h = ((max(precios_4h) - min(precios_4h)) / precio_actual) * 100 if precios_4h else 0
+                    rango_4h = ((precio_actual - min(precios_4h)) / (max(precios_4h) - min(precios_4h)) * 100) if precios_4h and max(precios_4h) != min(precios_4h) else 50
+                    bloque_4h = f"""
+══════════════════════════════════
+TEMPORALIDAD 4H (100 velas = ~17 días)
+══════════════════════════════════
+- RSI(14): {ind_4h['rsi']:.1f}
+- Tendencia EMA: {ind_4h['tendencia_ema']} (EMA20: ${ind_4h['ema20']}, EMA50: ${ind_4h['ema50']})
+- MACD: {ind_4h['macd']['macd']:.6f} | Signal: {ind_4h['macd']['signal']:.6f} | Histograma: {ind_4h['macd']['histograma']:.6f}
+- Bollinger: Sup ${ind_4h['bollinger']['superior']} | Inf ${ind_4h['bollinger']['inferior']} | Pos: {ind_4h['bollinger']['posicion']}%
+- ATR(14): ${ind_4h['atr']:.6f} ({ind_4h['atr_percent']:.2f}%)
+- Volumen relativo: {ind_4h['volumen_relativo']}x
+- Soporte: ${ind_4h['soporte']} ({ind_4h['dist_soporte']:.2f}%) | Resistencia: ${ind_4h['resistencia']} ({ind_4h['dist_resistencia']:.2f}%)
+- Volatilidad: {vol_4h:.2f}% | Pos en rango: {rango_4h:.1f}%"""
+                
                 prompt = f"""Eres un trader profesional de criptomonedas con análisis técnico y fundamental.
+Analiza TODOS los indicadores y las velas crudas antes de decidir.
 
-DATOS DEL MERCADO GLOBAL:
+MERCADO GLOBAL:
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-25: Extreme Fear (oportunidad de compra agresiva, NUNCA SHORT)
+- 0-25: Extreme Fear (oportunidad de compra, NUNCA SHORT)
 - 26-45: Fear (considerar LONGs en soportes)
 - 46-55: Neutral
 - 56-75: Greed (precaución con LONGs)
 - 76-100: Extreme Greed (preferir SHORTs o WAIT)
 
-DATOS TÉCNICOS DE {symbol}:
+══════════════════════════════════
+ANÁLISIS COMPLETO DE {symbol}
+══════════════════════════════════
+
+TEMPORALIDAD 1H (200 velas = ~8 días)
+══════════════════════════════════
 - Precio actual: ${precio_actual}
-- Máximo (100 velas): ${precio_max}
-- Mínimo (100 velas): ${precio_min}
-- Volatilidad: {volatilidad:.2f}%
-- Posición en rango: {posicion_rango:.1f}%
-- Tendencia EMA: {indicadores['tendencia_ema']}
-- RSI(14): {indicadores['rsi']:.1f}
+- RSI(14): {ind_1h['rsi']:.1f}
+- Tendencia EMA: {ind_1h['tendencia_ema']} (EMA20: ${ind_1h['ema20']}, EMA50: ${ind_1h['ema50']})
+- MACD: {ind_1h['macd']['macd']:.6f} | Signal: {ind_1h['macd']['signal']:.6f} | Histograma: {ind_1h['macd']['histograma']:.6f}
+- Bollinger: Sup ${ind_1h['bollinger']['superior']} | Med ${ind_1h['bollinger']['media']} | Inf ${ind_1h['bollinger']['inferior']} | Pos: {ind_1h['bollinger']['posicion']}%
+- ATR(14): ${ind_1h['atr']:.6f} ({ind_1h['atr_percent']:.2f}%)
+- Volumen relativo: {ind_1h['volumen_relativo']}x
+- Soporte: ${ind_1h['soporte']} ({ind_1h['dist_soporte']:.2f}%) | Resistencia: ${ind_1h['resistencia']} ({ind_1h['dist_resistencia']:.2f}%)
+- Volatilidad: {volatilidad:.2f}% | Pos en rango: {posicion_rango:.1f}%
+{bloque_4h}
+
+══════════════════════════════════
+ÚLTIMAS 50 VELAS 1H (open,high,low,close,volume)
+Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI
+══════════════════════════════════
+{velas_csv}
 
 REGLAS ESTRICTAS:
 1. Confianza mínima: 70%
 2. NUNCA operar CONTRA la tendencia EMA dominante
-3. Si la tendencia es ALCISTA → solo LONG o WAIT (PROHIBIDO SHORT)
-4. Si la tendencia es BAJISTA → solo SHORT o WAIT (PROHIBIDO LONG)
-5. Si Fear < 25, SOLO LONGs o WAIT (NUNCA SHORT)
-6. Si Greed > 75, PREFERIR SHORTs o WAIT
-7. Si precio está en 20% inferior del rango → considerar LONG
-8. Si precio está en 80% superior del rango → considerar SHORT
-9. Si está en medio (30%-70%) → WAIT a menos que Fear/Greed sea extremo
-10. Elige la temporalidad según la volatilidad actual: 1h (volatilidad 2-5%) o 4h (volatilidad <2%)
+3. Si tendencia ALCISTA → solo LONG o WAIT (PROHIBIDO SHORT)
+4. Si tendencia BAJISTA → solo SHORT o WAIT (PROHIBIDO LONG)
+5. Si Fear < 25 → SOLO LONGs o WAIT (NUNCA SHORT)
+6. Si Greed > 75 → PREFERIR SHORTs o WAIT
+7. Si precio en 20% inferior del rango → considerar LONG
+8. Si precio en 80% superior del rango → considerar SHORT
+9. Si MACD histograma cambia de signo → confirma entrada
+10. Si ambas temporalidades (1h y 4h) coinciden en dirección → mayor confianza
+11. Si divergencia entre RSI y precio → señal fuerte
+12. Elige temporalidad: 1h si volatilidad >2%, 4h si volatilidad <2%
 
-JSON (solo esto, sin explicación adicional):
+Responde SOLO con este JSON, sin explicación adicional:
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve"}}"""
                 
                 # V3.7: Retry logic con exponential backoff para errores 429
@@ -2354,7 +2481,7 @@ JSON (solo esto, sin explicación adicional):
                         error_str = str(api_error)
                         if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
                             if attempt < MAX_RETRIES - 1:
-                                wait_time = 15 * (attempt + 1)  # 15s, 30s, 45s
+                                wait_time = 15 * (attempt + 1)
                                 log(f"   ⏳ API limit alcanzado, esperando {wait_time}s...")
                                 time.sleep(wait_time)
                                 continue
@@ -2369,7 +2496,6 @@ JSON (solo esto, sin explicación adicional):
                     respuesta_limpia = respuesta.replace("```json","").replace("```","").strip()
                     data = json.loads(respuesta_limpia)
                     
-                    # Validar campos requeridos
                     if "ACCION" not in data or "CONFIANZA" not in data:
                         log(f"   ⚠️ Respuesta IA incompleta, saltando {symbol}")
                         continue
@@ -2383,40 +2509,47 @@ JSON (solo esto, sin explicación adicional):
                 temporalidad = data.get('TEMPORALIDAD', '1h')
                 razon = data.get('RAZON', 'Sin razón')
                 
-                # Normalizar confianza
                 if confianza > 1:
                     confianza = confianza / 100
                 
-                # Validar temporalidad
                 if temporalidad not in TEMPORALIDADES:
                     temporalidad = '1h'
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.0: VALIDACIÓN POST-IA - El código FUERZA las reglas anti-tendencia
-                # Doble seguridad: el prompt pide lo mismo, pero el código lo impone
+                # V5.3: VALIDACIÓN POST-IA — El código FUERZA las reglas
                 # ═══════════════════════════════════════════════════════════════════
                 
-                # REGLA 1: NO SHORT en Extreme Fear (Fear < 25) — probada y funcional
+                # REGLA 1: NO SHORT en Extreme Fear
                 if fg_valor < 25 and accion == "SHORT":
-                    log(f"   ⛔ V5.0 REGLA: SHORT rechazado en Extreme Fear (F&G={fg_valor})")
+                    log(f"   ⛔ REGLA: SHORT rechazado en Extreme Fear (F&G={fg_valor})")
                     accion = "WAIT"
-                    razon = f"SHORT rechazado: Fear & Greed {fg_valor} < 25 (Extreme Fear)"
+                    razon = f"SHORT rechazado: F&G {fg_valor} < 25 (Extreme Fear)"
                     confianza = 0
                 
-                # REGLA 2: NO operar CONTRA la tendencia EMA dominante
-                tendencia_ema = (indicadores.get('tendencia_ema', '') or '').upper()
+                # REGLA 2: NO operar CONTRA la tendencia EMA
+                tendencia_ema = (ind_1h.get('tendencia_ema', '') or '').upper()
                 if 'ALCISTA' in tendencia_ema and accion == "SHORT":
-                    log(f"   ⛔ V5.0 REGLA: SHORT rechazado en tendencia ALCISTA ({tendencia_ema})")
+                    log(f"   ⛔ REGLA: SHORT rechazado en tendencia ALCISTA ({tendencia_ema})")
                     accion = "WAIT"
                     confianza = 0
                 elif 'BAJISTA' in tendencia_ema and accion == "LONG":
-                    log(f"   ⛔ V5.0 REGLA: LONG rechazado en tendencia BAJISTA ({tendencia_ema})")
+                    log(f"   ⛔ REGLA: LONG rechazado en tendencia BAJISTA ({tendencia_ema})")
                     accion = "WAIT"
                     confianza = 0
                 
+                # V5.3 REGLA 3: Si 4h contradice 1h, reducir confianza
+                if ind_4h and confianza > 0:
+                    tend_4h = (ind_4h.get('tendencia_ema', '') or '').upper()
+                    if accion == "LONG" and 'BAJISTA' in tend_4h:
+                        confianza *= 0.7  # Penalizar 30%
+                        log(f"   ⚠️ 4h contradice 1h (BAJISTA vs LONG): confianza reducida a {int(confianza*100)}%")
+                    elif accion == "SHORT" and 'ALCISTA' in tend_4h:
+                        confianza *= 0.7
+                        log(f"   ⚠️ 4h contradice 1h (ALCISTA vs SHORT): confianza reducida a {int(confianza*100)}%")
+                
                 conf_pct = int(confianza * 100)
                 log(f"   📊 IA: {accion} | Confianza: {conf_pct}% | Temp: {temporalidad}")
-                log(f"   💭 {razon[:60]}...")
+                log(f"   💭 {razon[:80]}")
                 
                 # Guardar oportunidad si es válida
                 if accion in ["LONG", "SHORT"] and confianza >= CONFIANZA_MINIMA:
@@ -2428,9 +2561,14 @@ JSON (solo esto, sin explicación adicional):
                         'razon': razon,
                         'precio_actual': precio_actual,
                         'volatilidad': volatilidad,
-                        'indicadores': indicadores  # V3.0: Guardamos indicadores para ATR SL
+                        'indicadores': indicadores
                     })
                     log(f"   ✨ Oportunidad guardada!")
+                    # V5.3: Registrar decisión ejecutable en SQLite
+                    try:
+                        registrar_decision(symbol, accion, confianza, temporalidad, razon[:200], fg_valor, True)
+                    except Exception:
+                        pass
                 elif accion == "WAIT":
                     log(f"   ⏸️ IA decide esperar")
                 else:
@@ -2522,9 +2660,18 @@ JSON (solo esto, sin explicación adicional):
                 
                 if check:
                     ejecutadas += 1
-                    # V3.0: Ya no se envía Telegram individual por cada orden
                     # La estadística se acumula en stats_semanales y se envía el viernes
                     log(f"   ✅ Orden ejecutada exitosamente: {symbol} {accion}")
+                    # V5.3: Registrar trade en SQLite
+                    try:
+                        registrar_trade_abierto(
+                            symbol=symbol, side=side, action=accion,
+                            entry_price=precio_actual, quantity=cantidad,
+                            confidence=confianza, temporalidad=temporalidad,
+                            razon=razon[:200]
+                        )
+                    except Exception as db_err:
+                        log(f"   ⚠️ Error registrando trade en DB: {db_err}")
             else:
                 log(f"   ⚠️ Cantidad mínima no alcanzada para {symbol}")
         
@@ -2620,6 +2767,13 @@ stats_semanales["ultimo_resumen"] = None
 # Evitar re-procesar trades históricos al reiniciar contenedor
 inicializar_cache_trades(client)
 
+# V5.3: Inicializar base de datos SQLite
+inicializar_db()
+log("📦 Base de datos SQLite inicializada")
+
+# V5.3: Registrar balance de inicio del día
+registrar_balance_diario(datetime.now().strftime("%Y-%m-%d"), balance_inicio=saldo)
+
 # Inicializar tracking de posiciones existentes
 pos_iniciales = contar_posiciones_abiertas(client)
 if pos_iniciales > 0:
@@ -2679,13 +2833,19 @@ while True:
         # Envía un único mensaje por Telegram con el resumen de la semana
         # ═════════════════════════════════════════════════════════════════════
         if es_viernes_18h():
-            # Verificar que no hayamos enviado resumen en esta hora
             if not resumen_enviado_esta_hora:
                 enviar_resumen_semanal(client)
-                resumen_enviado_esta_hora = True  # Marcar como enviado
+                resumen_enviado_esta_hora = True
         else:
-            # Resetear la bandera cuando ya no sea viernes 18h
             resumen_enviado_esta_hora = False
+        
+        # V5.3: RESUMEN DIARIO - Todos los días a las 22:00
+        if es_hora_resumen_diario():
+            if not _resumen_diario_enviado:
+                enviar_resumen_diario(client)
+                _resumen_diario_enviado = True
+        else:
+            _resumen_diario_enviado = False
         
         # Protección contra Funding Fees (cada ciclo de análisis para evitar spam API)
         if FUNDING_PROTECTION and ciclo_analisis >= CICLOS_PARA_ANALISIS:
