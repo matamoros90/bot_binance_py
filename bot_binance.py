@@ -164,6 +164,19 @@ try:
     TZ_MERCADO = ZoneInfo("America/New_York")
 except Exception:
     TZ_MERCADO = None
+
+# V5.3: Zona horaria local (Guatemala = UTC-6)
+try:
+    TZ_LOCAL = ZoneInfo("America/Guatemala")
+except Exception:
+    TZ_LOCAL = None
+
+def hora_local():
+    """Retorna datetime actual en hora Guatemala (UTC-6).
+    En Koyeb el servidor está en UTC, sin esto todo está +6h descuadrado."""
+    if TZ_LOCAL:
+        return datetime.now(TZ_LOCAL)
+    return datetime.now()  # Fallback a hora del servidor
 VENTANA_USA_INICIO_MIN = 8 * 60 + 30   # 08:30 ET
 VENTANA_USA_FIN_MIN = 9 * 60 + 30      # 09:30 ET
 VENTANA_FED_DIA = 2                    # Miércoles
@@ -2098,29 +2111,29 @@ def verificar_posiciones_cerradas(client):
 # ═══════════════════════════════════════════════════════════════════════════════
 def es_viernes_18h():
     """
-    Verifica si es viernes a las 18:00 (hora local).
+    Verifica si es viernes a las 18:00 (hora Guatemala).
     """
-    ahora = datetime.now()
+    ahora = hora_local()
     es_viernes = ahora.weekday() == 4
     es_hora_18 = ahora.hour == 18
     return es_viernes and es_hora_18
 
 
-# V5.3: Resumen diario a las 22:00
+# V5.3: Resumen diario a las 22:00 hora Guatemala
 _resumen_diario_enviado = False
 
 def es_hora_resumen_diario():
-    """Verifica si es hora de enviar el resumen diario (22:00)."""
-    return datetime.now().hour == 22
+    """Verifica si es hora de enviar el resumen diario (22:00 Guatemala)."""
+    return hora_local().hour == 22
 
 def enviar_resumen_diario(client):
     """V5.3: Envía resumen diario con balance, PNL y métricas de riesgo."""
     try:
-        fecha = datetime.now().strftime("%d/%m/%Y")
+        fecha = hora_local().strftime("%d/%m/%Y")
         balance = obtener_balance(client)
         
         # Registrar balance fin de día
-        registrar_balance_diario(datetime.now().strftime("%Y-%m-%d"), balance_fin=balance)
+        registrar_balance_diario(hora_local().strftime("%Y-%m-%d"), balance_fin=balance)
         
         # Obtener métricas
         metricas_texto = generar_resumen_metricas()
@@ -2145,7 +2158,7 @@ def enviar_resumen_diario(client):
         
         # Registrar balance inicio del nuevo día
         registrar_balance_diario(
-            (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            (hora_local() + timedelta(days=1)).strftime("%Y-%m-%d"),
             balance_inicio=balance
         )
     except Exception as e:
@@ -2169,7 +2182,7 @@ def enviar_resumen_semanal(client):
     global stats_semanales
     try:
         # Obtener fecha actual formateada
-        fecha_actual = datetime.now().strftime("%d/%m/%Y")
+        fecha_actual = hora_local().strftime("%d/%m/%Y")
         
         # Obtener balance actual de Binance
         balance_actual = obtener_balance(client)
@@ -2204,7 +2217,7 @@ def enviar_resumen_semanal(client):
         # V5.2: INTERÉS COMPUESTO — Proyecciones a corto y largo plazo
         # ═══════════════════════════════════════════════════════════════════
         FECHA_INICIO_PROYECTO = datetime(2026, 2, 9)  # V3.7 reset
-        dias_operando = max(1, (datetime.now() - FECHA_INICIO_PROYECTO).days)
+        dias_operando = max(1, (hora_local().replace(tzinfo=None) - FECHA_INICIO_PROYECTO).days)
         
         if balance_actual > 0 and BALANCE_INICIAL_PROYECTO > 0:
             # Tasa diaria compuesta: (balance_final / balance_inicial) ^ (1/días) - 1
@@ -2281,7 +2294,7 @@ def enviar_resumen_semanal(client):
         stats_semanales["monto_ganado"] = 0
         stats_semanales["monto_perdido"] = 0
         stats_semanales["cierres_guardian"] = 0
-        stats_semanales["ultimo_resumen"] = datetime.now()  # Marcar timestamp del resumen
+        stats_semanales["ultimo_resumen"] = hora_local()
         
     except Exception as e:
         log(f"⚠️ Error enviando resumen semanal: {e}")
@@ -2381,11 +2394,11 @@ def ejecutar_trading(client, gemini_client):
                     continue
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.3: PREPARAR ÚLTIMAS 50 VELAS CRUDAS para cotejo de patrones
+                # V5.3: PREPARAR LAS 200 VELAS CRUDAS para cotejo completo
+                # Gemini puede cotejar patrones en las velas vs los indicadores
                 # ═══════════════════════════════════════════════════════════════════
-                ultimas_50 = velas_1h[-50:]
                 velas_csv_lines = []
-                for v in ultimas_50:
+                for v in velas_1h:
                     velas_csv_lines.append(
                         f"{v['open']:.6f},{v['high']:.6f},{v['low']:.6f},{v['close']:.6f},{v['volume']:.0f}"
                     )
@@ -2393,7 +2406,7 @@ def ejecutar_trading(client, gemini_client):
                 
                 # ═══════════════════════════════════════════════════════════════════
                 # V5.3: PROMPT ENRIQUECIDO — 14 indicadores × 2 temporalidades
-                #        + 50 velas crudas para detección de patrones
+                #        + 200 velas crudas para detección de patrones
                 # ═══════════════════════════════════════════════════════════════════
                 
                 # Bloque 4h (si disponible)
@@ -2444,8 +2457,9 @@ TEMPORALIDAD 1H (200 velas = ~8 días)
 {bloque_4h}
 
 ══════════════════════════════════
-ÚLTIMAS 50 VELAS 1H (open,high,low,close,volume)
-Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI
+LAS 200 VELAS 1H COMPLETAS (open,high,low,close,volume)
+Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
+Coteja estos datos con los indicadores calculados arriba.
 ══════════════════════════════════
 {velas_csv}
 
@@ -2772,7 +2786,7 @@ inicializar_db()
 log("📦 Base de datos SQLite inicializada")
 
 # V5.3: Registrar balance de inicio del día
-registrar_balance_diario(datetime.now().strftime("%Y-%m-%d"), balance_inicio=saldo)
+registrar_balance_diario(hora_local().strftime("%Y-%m-%d"), balance_inicio=saldo)
 
 # Inicializar tracking de posiciones existentes
 pos_iniciales = contar_posiciones_abiertas(client)
