@@ -445,48 +445,40 @@ def calcular_ema(precios_cierre, periodo):
 def calcular_macd(precios_cierre, rapida=12, lenta=26, signal=9):
     """
     Calcula el MACD (Moving Average Convergence Divergence).
-    
-    El MACD muestra la relación entre dos EMAs y ayuda a identificar
-    cambios en la fuerza, dirección, momentum y duración de una tendencia.
-    
-    Parámetros:
-        precios_cierre: Lista de precios de cierre
-        rapida: Período EMA rápida (default 12)
-        lenta: Período EMA lenta (default 26)
-        signal: Período para línea de señal (default 9)
-    
-    Retorna:
-        dict con:
-        - macd: Línea MACD (EMA rápida - EMA lenta)
-        - signal: Línea de señal (EMA del MACD)
-        - histograma: MACD - Signal (positivo = bullish, negativo = bearish)
-    
-    Señales:
-        - MACD cruza arriba de Signal: Señal de compra
-        - MACD cruza abajo de Signal: Señal de venta
-        - Histograma creciente: Momentum alcista aumentando
-        - Histograma decreciente: Momentum bajista aumentando
+    V5.2: Optimizado a O(n) con EMAs incrementales (antes O(n²)).
     """
     if len(precios_cierre) < lenta + signal:
         return {"macd": 0, "signal": 0, "histograma": 0}
     
-    # Calcular EMAs
-    ema_rapida = calcular_ema(precios_cierre, rapida)
-    ema_lenta = calcular_ema(precios_cierre, lenta)
+    # EMA incrementales O(n)
+    mult_r = 2 / (rapida + 1)
+    mult_l = 2 / (lenta + 1)
+    mult_s = 2 / (signal + 1)
     
-    # Línea MACD
-    macd = ema_rapida - ema_lenta
+    # Inicializar EMAs con SMA de los primeros N valores
+    ema_r = sum(precios_cierre[:rapida]) / rapida
+    ema_l = sum(precios_cierre[:lenta]) / lenta
     
-    # Para calcular Signal, necesitamos histórico de MACD
-    # Simplificación: usamos los últimos precios para aproximar
-    macd_historico = []
-    for i in range(signal + 10, len(precios_cierre)):
-        ema_r = calcular_ema(precios_cierre[:i], rapida)
-        ema_l = calcular_ema(precios_cierre[:i], lenta)
-        macd_historico.append(ema_r - ema_l)
+    # Calcular EMA rápida y lenta incrementalmente
+    macd_values = []
+    for i, precio in enumerate(precios_cierre):
+        if i >= rapida:
+            ema_r = (precio - ema_r) * mult_r + ema_r
+        if i >= lenta:
+            ema_l = (precio - ema_l) * mult_l + ema_l
+            macd_values.append(ema_r - ema_l)
     
-    if len(macd_historico) >= signal:
-        signal_line = calcular_ema(macd_historico, signal)
+    if not macd_values:
+        return {"macd": 0, "signal": 0, "histograma": 0}
+    
+    macd = macd_values[-1]
+    
+    # Signal line como EMA del MACD
+    if len(macd_values) >= signal:
+        ema_sig = sum(macd_values[:signal]) / signal
+        for val in macd_values[signal:]:
+            ema_sig = (val - ema_sig) * mult_s + ema_sig
+        signal_line = ema_sig
     else:
         signal_line = macd
     
@@ -1058,14 +1050,41 @@ def actualizar_stats_trade(pnl):
 # CÁLCULO DE MONTO (Escudo 80/20) - Entre 2% y 10%
 # ═══════════════════════════════════════════════════════════════════════════════
 def calcular_monto(saldo, confianza):
-    """Calcula el monto a invertir basado en confianza (2% a 10% del balance disponible)"""
+    """V5.2: Calcula monto con interés compuesto — reinvierte ganancias, protege en pérdidas.
+    
+    Fórmula base: Porcentaje 2-10% del balance disponible según confianza.
+    Interés compuesto:
+    - Si balance creció vs BALANCE_INICIAL_PROYECTO → escalar porcentaje hasta 1.5x
+    - Si balance bajó → reducir porcentaje hasta 0.5x (protección)
+    - Cap de seguridad: nunca más del 12% del balance disponible
+    """
     saldo_disponible = saldo * ESCUDO_TRABAJO
-    # Mapear confianza 70%-100% a porcentaje 2%-10%
+    # Mapear confianza 70%-100% a porcentaje base 2%-10%
     rango_confianza = 1.0 - CONFIANZA_MINIMA  # 0.30
     exceso = max(0, confianza - CONFIANZA_MINIMA)  # 0 a 0.30
-    porcentaje = 2 + (exceso / rango_confianza) * 8  # 2% a 10%
-    porcentaje = min(10, max(2, porcentaje))
+    porcentaje_base = 2 + (exceso / rango_confianza) * 8  # 2% a 10%
+    porcentaje_base = min(10, max(2, porcentaje_base))
+    
+    # V5.2: Factor de interés compuesto
+    ganancia_acumulada = saldo - BALANCE_INICIAL_PROYECTO
+    if ganancia_acumulada > 0 and saldo > BALANCE_INICIAL_PROYECTO:
+        # Balance creció → escalar posiciones proporcionalmente (interés compuesto)
+        # Ejemplo: balance creció 20% → factor = 1.20 (cap 1.50)
+        factor_compuesto = min(1.5, 1 + (ganancia_acumulada / BALANCE_INICIAL_PROYECTO))
+        porcentaje = porcentaje_base * factor_compuesto
+        porcentaje = min(12, porcentaje)  # Cap de seguridad en 12%
+    else:
+        # Balance bajó → reducir posiciones (protección anti-pérdida)
+        # Ejemplo: balance bajó 30% → factor = 0.70 (mín 0.50)
+        factor_desgaste = max(0.5, saldo / BALANCE_INICIAL_PROYECTO) if BALANCE_INICIAL_PROYECTO > 0 else 1.0
+        porcentaje = porcentaje_base * factor_desgaste
+    
     monto = saldo_disponible * (porcentaje / 100)
+    
+    if LOG_DETALLADO:
+        factor = porcentaje / porcentaje_base if porcentaje_base > 0 else 1
+        log(f"   💰 Interés compuesto: factor {factor:.2f}x | base {porcentaje_base:.1f}% → ajustado {porcentaje:.1f}% | ${monto:.2f}")
+    
     return max(1, round(monto, 2))
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1244,11 +1263,16 @@ def cancelar_ordenes_sl(client, symbol):
 
 
 def existe_orden_sl_abierta(client, symbol):
-    """Verifica si hay al menos una orden de stop activa para el símbolo."""
+    """Verifica si hay al menos una orden de stop o TP activa para el símbolo.
+    V5.2: También cuenta TAKE_PROFIT_MARKET como protección válida
+    ya que consume cupo de stop orders y protege la posición."""
+    TIPOS_PROTECCION = ('STOP', 'STOP_MARKET', 'STOP_LOSS', 'STOP_LOSS_MARKET',
+                        'TAKE_PROFIT', 'TAKE_PROFIT_MARKET')
     try:
         ordenes = client.futures_get_open_orders(symbol=symbol)
         for orden in ordenes:
-            if 'STOP' in (orden.get('type', '') or '').upper():
+            tipo = (orden.get('type', '') or '').upper()
+            if any(t in tipo for t in TIPOS_PROTECCION):
                 return True
     except Exception:
         pass
@@ -1259,7 +1283,8 @@ def existe_orden_sl_abierta(client, symbol):
             for orden in algo_ordenes:
                 if orden.get('symbol') != symbol:
                     continue
-                if 'STOP' in (orden.get('type', '') or '').upper():
+                tipo = (orden.get('type', '') or '').upper()
+                if any(t in tipo for t in TIPOS_PROTECCION):
                     return True
     except Exception:
         pass
@@ -1294,8 +1319,8 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
         except Exception as trad_error:
             trad_str = str(trad_error)
             if '-4045' in trad_str:
-                if LOG_DETALLADO:
-                    log_throttled(f"sl_4045_trad_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 al crear SL tradicional", 120)
+                # V5.2: Log siempre (antes bloqueado por LOG_DETALLADO)
+                log_throttled(f"sl_4045_trad_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 al crear SL tradicional", 120)
                 return False, True  # already_protected
             
             # Fallback: Algo Order API
@@ -1311,8 +1336,8 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
                 return True, False
             except Exception as algo_error:
                 if '-4045' in str(algo_error):
-                    if LOG_DETALLADO:
-                        log_throttled(f"sl_4045_algo_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 también en Algo Order", 120)
+                    # V5.2: Log siempre (antes bloqueado por LOG_DETALLADO)
+                    log_throttled(f"sl_4045_algo_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 también en Algo Order", 120)
                     return False, True
                 log(f"   ⚠️ Algo Order también falló: {algo_error}")
                 return False, False
@@ -1651,16 +1676,15 @@ def verificar_ordenes_sl_existen(client):
                         _sl_verificados[symbol] = time.time()
                         _sl_retry_cooldown_until.pop(symbol, None)
                     elif already_protected:
-                        if existe_orden_sl_abierta(client, symbol):
-                            _sl_verificados[symbol] = time.time()
-                            _sl_retry_cooldown_until.pop(symbol, None)
-                        else:
-                            _sl_retry_cooldown_until[symbol] = time.time() + SL_REINTENTO_COOLDOWN
-                            log_throttled(
-                                f"sl_4045_no_active_{symbol}",
-                                f"⚠️ {symbol}: -4045 reportado pero no se encontró SL activa. Cooldown {int(SL_REINTENTO_COOLDOWN/60)} min.",
-                                120
-                            )
+                        # V5.2 FIX: -4045 = Binance confirma que max stop orders fue alcanzado
+                        # Aceptar como protegido directamente (rompe el bucle infinito anterior)
+                        _sl_verificados[symbol] = time.time()
+                        _sl_retry_cooldown_until.pop(symbol, None)
+                        log_throttled(
+                            f"sl_4045_accepted_{symbol}",
+                            f"✅ {symbol}: -4045 aceptado como protegido (max stop orders alcanzado)",
+                            300
+                        )
                     else:
                         _sl_retry_cooldown_until[symbol] = time.time() + SL_REINTENTO_COOLDOWN
                         log_throttled(
@@ -1948,13 +1972,21 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
                     if mark_info:
                         mk_price = float(mark_info[0]['markPrice'])
                         if side == 'BUY':  # LONG
-                            sl_retry = mk_price * (1 - 0.03)  # V4.0: -3% (antes -7%)
+                            sl_retry = mk_price * (1 - 0.03)  # V4.0: -3%
                         else:  # SHORT
-                            sl_retry = mk_price * (1 + 0.03)  # V4.0: -3% (antes -7%)
+                            sl_retry = mk_price * (1 + 0.03)  # V4.0: +3%
+                        # V5.2: Aplicar precisión correcta para tokens baratos
+                        try:
+                            info_ex = obtener_exchange_info(client)
+                            sym_info = next((s for s in info_ex['symbols'] if s['symbol'] == symbol), None)
+                            if sym_info:
+                                sl_retry = round(sl_retry, int(sym_info['pricePrecision']))
+                        except Exception:
+                            sl_retry = round(sl_retry, 6)  # Fallback a 6 decimales
                         sl_side = 'SELL' if side == 'BUY' else 'BUY'
                         success, _ = crear_orden_sl(client, symbol, sl_side, sl_retry, cantidad)
                         if success:
-                            log(f"   ✅ SL de emergencia creado en retry: ${sl_retry:.4f}")
+                            log(f"   ✅ SL de emergencia creado en retry: ${sl_retry:.6f}")
                         else:
                             log(f"   ⛔ SL NO CREADO para {symbol}. Guardian será protección.")
                 except Exception as e2:
@@ -2022,8 +2054,8 @@ def verificar_posiciones_cerradas(client):
             posiciones_notificadas.add(unique_key)
             
             # Limpiar set si crece demasiado (evitar memory leak)
-            if len(posiciones_notificadas) > 100:
-                posiciones_notificadas = set(list(posiciones_notificadas)[-50:])
+            if len(posiciones_notificadas) > 200:
+                posiciones_notificadas.clear()  # V5.2: Reset completo (set no tiene orden)
             
             # ═══════════════════════════════════════════════════════════════
             # ACUMULAR ESTADÍSTICAS SEMANALES (V3.0)
@@ -2119,32 +2151,65 @@ def enviar_resumen_semanal(client):
             roi_semanal = 0
         
         # ═══════════════════════════════════════════════════════════════════
+        # V5.2: INTERÉS COMPUESTO — Proyecciones a corto y largo plazo
+        # ═══════════════════════════════════════════════════════════════════
+        FECHA_INICIO_PROYECTO = datetime(2026, 2, 9)  # V3.7 reset
+        dias_operando = max(1, (datetime.now() - FECHA_INICIO_PROYECTO).days)
+        
+        if balance_actual > 0 and BALANCE_INICIAL_PROYECTO > 0:
+            # Tasa diaria compuesta: (balance_final / balance_inicial) ^ (1/días) - 1
+            factor_diario = (balance_actual / BALANCE_INICIAL_PROYECTO) ** (1 / dias_operando)
+            tasa_diaria_pct = (factor_diario - 1) * 100
+            
+            # Proyecciones con interés compuesto
+            proy_30d = balance_actual * (factor_diario ** 30)
+            proy_90d = balance_actual * (factor_diario ** 90)
+            proy_365d = balance_actual * (factor_diario ** 365)
+            
+            # ROI anualizado compuesto
+            roi_anual = ((factor_diario ** 365) - 1) * 100
+        else:
+            tasa_diaria_pct = 0
+            proy_30d = proy_90d = proy_365d = balance_actual
+            roi_anual = 0
+        
+        # ═══════════════════════════════════════════════════════════════════
         # CONSTRUIR MENSAJE DE TELEGRAM
         # ═══════════════════════════════════════════════════════════════════
-        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V5.0*
+        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V5.2*
 📅 Fecha: {fecha_actual}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-� *RENDIMIENTO TOTAL DEL PROYECTO*
+📈 *RENDIMIENTO TOTAL DEL PROYECTO*
 ━━━━━━━━━━━━━━━━━━━━━━━
-💰 *Balance Inicial (04/01):* `${BALANCE_INICIAL_PROYECTO:.2f}`
+💰 *Balance Inicial:* `${BALANCE_INICIAL_PROYECTO:.2f}`
 💵 *Balance Actual:* `${balance_actual:.2f}`
 {emoji_total} *Ganancia Total:* `${ganancia_total:.2f}`
 📊 *ROI Total:* `{roi_total:.2f}%`
+📆 *Días operando:* `{dias_operando}`
+💹 *Tasa diaria compuesta:* `{tasa_diaria_pct:+.3f}%`
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-� *ESTA SEMANA*
+🔮 *PROYECCIÓN INTERÉS COMPUESTO*
+━━━━━━━━━━━━━━━━━━━━━━━
+📅 *30 días:* `${proy_30d:,.2f}`
+📅 *90 días:* `${proy_90d:,.2f}`
+📅 *1 año:* `${proy_365d:,.2f}`
+📊 *ROI anualizado:* `{roi_anual:+.1f}%`
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📋 *ESTA SEMANA*
 ━━━━━━━━━━━━━━━━━━━━━━━
 ✅ *Trades Ganados:* `{stats_semanales['ganados']}`
 ❌ *Trades Perdidos:* `{stats_semanales['perdidos']}`
 💰 *Ganancias:* `+${stats_semanales['monto_ganado']:.2f}`
-� *Pérdidas:* `-${stats_semanales['monto_perdido']:.2f}`
+💸 *Pérdidas:* `-${stats_semanales['monto_perdido']:.2f}`
 🛡️ *Cierres Guardian:* `{stats_semanales['cierres_guardian']}`
 {emoji_semana} *Resultado Semana:* `${resultado_semana:.2f}`
-� *ROI Semanal:* `{roi_semanal:.2f}%`
+📈 *ROI Semanal:* `{roi_semanal:.2f}%`
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Bot Binance V5.0 Activo ✅"""
+🤖 Bot Binance V5.2 Activo ✅"""
         
         # Enviar mensaje por Telegram
         enviar_telegram(mensaje)

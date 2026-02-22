@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V5.0 - Reset Inteligente: Prompt Simple + SL Amplio + Anti-Tendencia
+# 🤖 Bot Binance Futures V5.2 - Interés Compuesto + Fix SL -4045 + Optimizaciones
 
 ## 📋 Descripción
 
@@ -6,11 +6,11 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 18/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 22/02/2026)
 
 | Aspecto        | Estado                                 |
 | -------------- | -------------------------------------- |
-| **Versión**    | V5.0 + Salvaguardas V5.1               |
+| **Versión**    | V5.2                                   |
 | **Plataforma** | Koyeb (Deploy automático desde GitHub) |
 | **Modo**       | TESTNET (Pruebas)                      |
 | **Estado**     | 🟢 Operativo                           |
@@ -31,7 +31,51 @@ Bot de trading automatizado para Binance Futures que utiliza **Gemini 2.0 Flash*
 
 ---
 
-## ✅ Actualización aplicada (18/02/2026)
+## ✅ Actualización V5.2 (22/02/2026)
+
+Revisión completa del bot con **3 bug fixes críticos**, **2 mejoras de fórmulas** y **2 optimizaciones**:
+
+### 🔴 Bugs Críticos Corregidos
+
+1. **Fix loop infinito error -4045**:
+   - El bot entraba en un ciclo cada 5 min intentando crear SL → Binance rechazaba → verificaba → no encontraba → repetía.
+   - **Solución**: Cuando Binance retorna -4045 ("max stop orders alcanzado"), se acepta como confirmación de protección válida.
+   - `existe_orden_sl_abierta()` ahora también cuenta `TAKE_PROFIT_MARKET` como protección.
+
+2. **Logs -4045 desbloqueados**:
+   - Los logs de error -4045 estaban detrás de `if LOG_DETALLADO` — si se desactivaba, los errores eran completamente silenciosos.
+   - **Solución**: Logs de -4045 ahora siempre visibles.
+
+3. **Precisión SL para tokens baratos**:
+   - Tokens como VOXELUSDT ($0.0126) y BIDUSDT ($0.0085) necesitan 4-5 decimales.
+   - **Solución**: El SL retry ahora usa `pricePrecision` del exchange info en vez de redondeo fijo.
+
+### 📊 Mejoras de Fórmulas
+
+4. **Interés compuesto en position sizing** (`calcular_monto()`):
+   - Si balance crece vs `BALANCE_INICIAL_PROYECTO` → posiciones escalan proporcionalmente (hasta 1.5x).
+   - Si balance baja → posiciones se reducen (mínimo 0.5x) como protección.
+   - Cap de seguridad: nunca más del 12% del balance disponible.
+   - Fórmula: `factor = min(1.5, 1 + ganancia/balance_inicial)`
+
+5. **ROI con interés compuesto en resumen semanal**:
+   - Tasa diaria compuesta: `(balance/inicial)^(1/días) - 1`
+   - Proyecciones a **30, 90 y 365 días** con la tasa compuesta actual.
+   - ROI anualizado compuesto.
+
+### ⚡ Optimizaciones
+
+6. **MACD optimizado de O(n²) a O(n)**:
+   - Antes recalculaba EMA completa en cada iteración (~200x más lento).
+   - Ahora usa EMAs incrementales en un solo paso.
+
+7. **Fix `posiciones_notificadas` cleanup**:
+   - Sets no tienen orden garantizado, `[-50:]` podía eliminar entradas recientes.
+   - Ahora usa `.clear()` cuando supera 200 entradas.
+
+---
+
+## ✅ Actualización V5.0/V5.1 (18/02/2026)
 
 Se implementaron en código los **5 hallazgos prioritarios** detectados en revisión técnica:
 
@@ -56,7 +100,7 @@ Además se aplicó parte del roadmap para reducir el componente impredecible (~4
 
 Pendiente de implementación (roadmap):
 
-- ⏳ V5.2: Liquidation Heatmap, Open Interest/Order Flow, Multi-timeframe confirmation, Position sizing dinámico por volatilidad, Correlación de posiciones.
+- ⏳ V5.3: Liquidation Heatmap, Open Interest/Order Flow, Multi-timeframe confirmation, Correlación de posiciones.
 - ⏳ V6.0: ML sobre historial propio y Whale tracking.
 
 ---
