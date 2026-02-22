@@ -15,6 +15,11 @@ from persistence import (
     registrar_decision, registrar_balance_diario, calcular_metricas_riesgo,
     obtener_datos_kelly, generar_resumen_metricas
 )
+from indicators import (
+    calcular_rsi, calcular_ema, calcular_macd, calcular_bollinger,
+    calcular_atr, calcular_volumen_relativo, detectar_soportes_resistencias,
+    obtener_tendencia_ema, analizar_indicadores_completo
+)
 
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)

@@ -95,8 +95,11 @@ def registrar_trade_cerrado(symbol, pnl, exit_price=None):
     c.execute("""
         UPDATE trades 
         SET status = 'CLOSED', pnl = ?, exit_price = ?, closed_at = ?
-        WHERE symbol = ? AND status = 'OPEN'
-        ORDER BY id DESC LIMIT 1
+        WHERE id = (
+            SELECT id FROM trades
+            WHERE symbol = ? AND status = 'OPEN'
+            ORDER BY id DESC LIMIT 1
+        )
     """, (pnl, exit_price, datetime.now().isoformat(), symbol))
     conn.commit()
     conn.close()
