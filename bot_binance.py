@@ -1349,17 +1349,17 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             # Fallback: Algo Order API
             log(f"   ⚠️ SL tradicional falló, intentando Algo Order...")
             try:
+                # V5.3 Fix: usar closePosition en vez de quantity (evita error max quantity)
                 client.futures_create_algo_order(
                     symbol=symbol,
                     side=side,
                     type='STOP_MARKET',
                     triggerPrice=str(precio),
-                    quantity=str(cantidad)
+                    closePosition='true'
                 )
                 return True, False
             except Exception as algo_error:
                 if '-4045' in str(algo_error):
-                    # V5.2: Log siempre (antes bloqueado por LOG_DETALLADO)
                     log_throttled(f"sl_4045_algo_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 también en Algo Order", 120)
                     return False, True
                 log(f"   ⚠️ Algo Order también falló: {algo_error}")
@@ -1473,9 +1473,9 @@ def guardian_posiciones(client):
             # Calcular porcentaje de ganancia/pérdida
             if entry_price > 0:
                 if cantidad > 0:  # LONG
-                    pnl_porcentaje = (mark_price - entry_price) / entry_price
+                    pnl_porcentaje = ((mark_price - entry_price) / entry_price) * APALANCAMIENTO
                 else:  # SHORT
-                    pnl_porcentaje = (entry_price - mark_price) / entry_price
+                    pnl_porcentaje = ((entry_price - mark_price) / entry_price) * APALANCAMIENTO
             else:
                 pnl_porcentaje = 0
             
@@ -1513,7 +1513,11 @@ def guardian_posiciones(client):
                     log(f"❌ Error cerrando posición de emergencia {symbol}: {e}")
                     # V3.0: Ya no se envía Telegram de error individual
             
-            # V4.0 FIX: Logear TODAS las posiciones activas (antes solo > 5%)
+            # V5.3 Fix: Pérdidas > 3% SIEMPRE visibles (antes ocultas por LOG_DETALLADO)
+            elif pnl_porcentaje < -0.03:
+                estado = "🔴"
+                side_str = 'LONG' if cantidad > 0 else 'SHORT'
+                log(f"{estado} Guardián {symbol} {side_str}: {pnl_porcentaje*100:.2f}% (PNL: ${unrealized_pnl:.2f})")
             elif LOG_DETALLADO:
                 estado = "🟢" if pnl_porcentaje > 0 else "🔴"
                 side_str = 'LONG' if cantidad > 0 else 'SHORT'
