@@ -61,6 +61,9 @@ Mejora enfocada en eliminar bloqueos lógicos que devolvían `WAIT` de forma rec
 4. **Versión operativa visible en logs**
 - Logs de arranque y monitoreo pasan a mostrar `V5.5` para verificar despliegue real en Koyeb.
 
+5. **Calibración de umbral de ejecución**
+- `CONFIANZA_MINIMA` se ajusta de `70%` a `66%` para reducir rechazos marginales (60-69%) sin desactivar filtros de riesgo.
+
 ---
 
 ## ✅ V5.4 (24/02/2026) — Desbloqueo de Ejecución + Filtro Financiero
@@ -138,7 +141,7 @@ Con esto se evita quedar expuesto sin protección real.
 ## ⚙️ Configuración Actual (V5.5)
 
 ```python
-CONFIANZA_MINIMA = 0.70
+CONFIANZA_MINIMA = 0.66
 ESCUDO_TRABAJO = 0.80
 APALANCAMIENTO = 3
 TOP_ACTIVOS = 15

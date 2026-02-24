@@ -29,7 +29,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V5.5"
-CONFIANZA_MINIMA = 0.70   # 70% - V3.7: Aumentado para mayor selectividad
+CONFIANZA_MINIMA = 0.66   # 66% - V5.5: calibrado para reducir bloqueos en WAIT
 ESCUDO_TRABAJO = 0.80     # 80% del balance disponible para trading
 ESCUDO_SEGURO = 0.20      # 20% protegido
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -997,7 +997,7 @@ def calcular_kelly(saldo_disponible, confianza_ia):
     
     Parámetros:
         saldo_disponible: Capital disponible para trading
-        confianza_ia: Confianza de la IA (0.70 a 1.0)
+        confianza_ia: Confianza de la IA (0.66 a 1.0)
     
     Retorna:
         float: Monto a invertir en USD
@@ -1094,9 +1094,9 @@ def calcular_monto(saldo, confianza):
     - Cap de seguridad: nunca más del 12% del balance disponible
     """
     saldo_disponible = saldo * ESCUDO_TRABAJO
-    # Mapear confianza 70%-100% a porcentaje base 2%-10%
-    rango_confianza = 1.0 - CONFIANZA_MINIMA  # 0.30
-    exceso = max(0, confianza - CONFIANZA_MINIMA)  # 0 a 0.30
+    # Mapear confianza 66%-100% a porcentaje base 2%-10%
+    rango_confianza = 1.0 - CONFIANZA_MINIMA  # 0.34
+    exceso = max(0, confianza - CONFIANZA_MINIMA)  # 0 a 0.34
     porcentaje_base = 2 + (exceso / rango_confianza) * 8  # 2% a 10%
     porcentaje_base = min(10, max(2, porcentaje_base))
     
@@ -2572,7 +2572,7 @@ Coteja estos datos con los indicadores calculados arriba.
 {velas_csv}
 
 REGLAS OPERATIVAS:
-1. Confianza objetivo para ejecutar: >= 70%.
+1. Confianza objetivo para ejecutar: >= 66%.
 2. Prioriza operar a favor de la tendencia EMA dominante.
 3. Tendencia ALCISTA: prioriza LONG; SHORT solo con sobrecompra extrema + confirmación de reversión.
 4. Tendencia BAJISTA: prioriza SHORT; LONG solo con sobreventa extrema + confirmación de reversión.
