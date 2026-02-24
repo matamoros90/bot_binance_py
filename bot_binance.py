@@ -145,6 +145,18 @@ TP_SL_CONFIG = {
     "4h":  {"tp": 0.06, "sl": 0.035},     # +6%, -3.5% (R:R 1.71:1)
 }
 
+# V5.4: Modo rango para capturar lateralidad sin forzar lógica de tendencia
+TP_SL_RANGO_CONFIG = {
+    "1h":  {"tp": 0.02, "sl": 0.015},     # +2.0%, -1.5%
+    "4h":  {"tp": 0.03, "sl": 0.02},      # +3.0%, -2.0%
+}
+FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
+
+# V5.4: Filtro financiero mínimo por operación (EV neto)
+FEE_ROUNDTRIP_EST = 0.0012        # 0.12% estimado ida+vuelta
+SLIPPAGE_EST = 0.0006             # 0.06% slippage conservador
+EV_MINIMO = 0.0008                # 0.08% mínimo neto esperado para ejecutar
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # FEAR & GREED INDEX
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -844,9 +856,7 @@ def verificar_nuevo_dia(balance_actual):
     Retorna:
         bool: True si es un nuevo día, False si es el mismo
     """
-    from datetime import datetime
-    
-    hoy = datetime.now().strftime("%Y-%m-%d")
+    hoy = hora_local().strftime("%Y-%m-%d")
     
     if stats_diarias["fecha_actual"] != hoy:
         # Es un nuevo día - reiniciar estadísticas
@@ -901,6 +911,7 @@ def verificar_drawdown_diario(balance_actual):
     
     # Calcular drawdown actual
     drawdown = (balance_actual - balance_inicio) / balance_inicio
+    stats_diarias["pnl_dia"] = balance_actual - balance_inicio
     
     # Si el drawdown supera el máximo permitido
     if drawdown < -DRAWDOWN_MAXIMO_DIARIO:
@@ -1109,6 +1120,20 @@ def calcular_monto(saldo, confianza):
         log(f"   💰 Interés compuesto: factor {factor:.2f}x | base {porcentaje_base:.1f}% → ajustado {porcentaje:.1f}% | ${monto:.2f}")
     
     return max(1, round(monto, 2))
+
+
+def calcular_ev_neto(confianza, tp_pct, sl_pct, modo_mercado="TREND"):
+    """Calcula valor esperado neto por operación descontando fees/slippage."""
+    confianza = max(0.0, min(0.99, confianza))
+    penalizacion_modo = 0.05 if modo_mercado == "RANGE" else 0.0
+    # Evita sobreestimar probabilidad de acierto solo por confianza IA
+    p_win = max(0.40, min(0.90, confianza - penalizacion_modo))
+
+    ev_bruto = (p_win * tp_pct) - ((1 - p_win) * sl_pct)
+    costos_estimados = FEE_ROUNDTRIP_EST + SLIPPAGE_EST
+    ev_neto = ev_bruto - costos_estimados
+
+    return ev_neto, p_win
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONEXIÓN A BINANCE
@@ -1952,10 +1977,10 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
             type='MARKET',
             quantity=cantidad
         )
-        
+
         order_id = orden['orderId']
         log(f"   ✅ Orden ejecutada: {order_id}")
-        
+
         # Configurar TP y SL iniciales
         if tp and sl:
             # Obtener precisión del precio
@@ -1965,7 +1990,7 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
                 price_precision = int(symbol_info['pricePrecision'])
                 tp = round(tp, price_precision)
                 sl = round(sl, price_precision)
-            
+
             # Take Profit
             try:
                 tp_side = 'SELL' if side == 'BUY' else 'BUY'
@@ -1979,8 +2004,9 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
                 log(f"   📈 TP configurado: ${tp}")
             except Exception as e:
                 log(f"   ⚠️ Error creando TP: {e}")
-            
-            # V5.0: Stop Loss inicial con STOP_MARKET tradicional (método de enero)
+
+            sl_creado = False
+            # Stop Loss inicial con STOP_MARKET tradicional
             try:
                 sl_side = 'SELL' if side == 'BUY' else 'BUY'
                 client.futures_create_order(
@@ -1991,36 +2017,64 @@ def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
                     closePosition='true'
                 )
                 log(f"   📉 SL inicial: ${sl} (Trailing activo)")
+                sl_creado = True
             except Exception as e:
                 log(f"   ⛔ ERROR CRÍTICO: SL inicial no creado para {symbol}: {e}")
-                # V3.9: Reintentar SL con mark_price actual como fallback
+                # Reintentar SL con mark_price actual como fallback
                 try:
                     mark_info = client.futures_position_information(symbol=symbol)
                     if mark_info:
                         mk_price = float(mark_info[0]['markPrice'])
                         if side == 'BUY':  # LONG
-                            sl_retry = mk_price * (1 - 0.03)  # V4.0: -3%
+                            sl_retry = mk_price * (1 - 0.03)
                         else:  # SHORT
-                            sl_retry = mk_price * (1 + 0.03)  # V4.0: +3%
-                        # V5.2: Aplicar precisión correcta para tokens baratos
+                            sl_retry = mk_price * (1 + 0.03)
+
                         try:
                             info_ex = obtener_exchange_info(client)
                             sym_info = next((s for s in info_ex['symbols'] if s['symbol'] == symbol), None)
                             if sym_info:
                                 sl_retry = round(sl_retry, int(sym_info['pricePrecision']))
                         except Exception:
-                            sl_retry = round(sl_retry, 6)  # Fallback a 6 decimales
+                            sl_retry = round(sl_retry, 6)
+
                         sl_side = 'SELL' if side == 'BUY' else 'BUY'
                         success, _ = crear_orden_sl(client, symbol, sl_side, sl_retry, cantidad)
                         if success:
+                            sl_creado = True
                             log(f"   ✅ SL de emergencia creado en retry: ${sl_retry:.6f}")
                         else:
                             log(f"   ⛔ SL NO CREADO para {symbol}. Guardian será protección.")
                 except Exception as e2:
                     log(f"   ⛔ SL NO CREADO para {symbol} (retry falló: {e2}). Guardian será protección.")
-        
+
+            # V5.4: SL obligatorio - si no hay SL, cerrar posición inmediatamente
+            if not sl_creado:
+                log(f"   ⛔ SL obligatorio incumplido en {symbol}. Cerrando posición por seguridad...")
+                try:
+                    side_cierre = 'SELL' if side == 'BUY' else 'BUY'
+                    pos_info = client.futures_position_information(symbol=symbol)
+                    qty_cierre = abs(cantidad)
+                    if pos_info:
+                        qty_pos = abs(float(pos_info[0].get('positionAmt', 0)))
+                        if qty_pos > 0:
+                            qty_cierre = qty_pos
+
+                    if qty_cierre > 0:
+                        client.futures_create_order(
+                            symbol=symbol,
+                            side=side_cierre,
+                            type='MARKET',
+                            quantity=qty_cierre,
+                            reduceOnly='true'
+                        )
+                    log(f"   ✅ Posición cerrada por seguridad (sin SL válido)")
+                except Exception as close_err:
+                    log(f"   ❌ ERROR CRÍTICO: no se pudo cerrar {symbol} tras fallo de SL: {close_err}")
+                return False, "SL_NO_VALIDO"
+
         return True, order_id
-        
+
     except Exception as e:
         log(f"   ❌ Error ejecutando orden: {e}")
         return False, str(e)
@@ -2527,53 +2581,84 @@ Responde SOLO con este JSON, sin explicación adicional:
                     log(f"   ⚠️ JSON inválido de IA para {symbol}, saltando")
                     continue
                 
-                accion = data.get('ACCION', 'WAIT')
+                accion = str(data.get('ACCION', 'WAIT')).upper()
                 confianza = float(data.get('CONFIANZA', 0))
                 temporalidad = data.get('TEMPORALIDAD', '1h')
                 razon = data.get('RAZON', 'Sin razón')
-                
+
                 if confianza > 1:
                     confianza = confianza / 100
-                
+                confianza = max(0.0, min(0.99, confianza))
+
                 if temporalidad not in TEMPORALIDADES:
                     temporalidad = '1h'
-                
+
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.3: VALIDACIÓN POST-IA — El código FUERZA las reglas
+                # V5.4: VALIDACIÓN POST-IA con score (evita bloqueo total)
                 # ═══════════════════════════════════════════════════════════════════
-                
-                # REGLA 1: NO SHORT en Extreme Fear
-                if fg_valor < 25 and accion == "SHORT":
-                    log(f"   ⛔ REGLA: SHORT rechazado en Extreme Fear (F&G={fg_valor})")
-                    accion = "WAIT"
-                    razon = f"SHORT rechazado: F&G {fg_valor} < 25 (Extreme Fear)"
-                    confianza = 0
-                
-                # REGLA 2: NO operar CONTRA la tendencia EMA
                 tendencia_ema = (ind_1h.get('tendencia_ema', '') or '').upper()
-                if 'ALCISTA' in tendencia_ema and accion == "SHORT":
-                    log(f"   ⛔ REGLA: SHORT rechazado en tendencia ALCISTA ({tendencia_ema})")
-                    accion = "WAIT"
-                    confianza = 0
-                elif 'BAJISTA' in tendencia_ema and accion == "LONG":
-                    log(f"   ⛔ REGLA: LONG rechazado en tendencia BAJISTA ({tendencia_ema})")
-                    accion = "WAIT"
-                    confianza = 0
-                
-                # V5.3 REGLA 3: Si 4h contradice 1h, reducir confianza
-                if ind_4h and confianza > 0:
+                rsi_1h = ind_1h.get('rsi', 50)
+                atr_pct_1h = ind_1h.get('atr_percent', 0)
+                boll_ancho_1h = (ind_1h.get('bollinger') or {}).get('ancho', 0)
+                modo_mercado = "RANGE" if ('LATERAL' in tendencia_ema and atr_pct_1h < 1.2 and boll_ancho_1h < 8) else "TREND"
+
+                score_ajuste = 0.0
+                reglas_aplicadas = []
+
+                # Fear extremo: penaliza SHORT, pero no lo bloquea automáticamente en tendencia fuerte
+                if fg_valor < 25 and accion == "SHORT":
+                    if modo_mercado == "TREND" and 'BAJISTA' in tendencia_ema and rsi_1h > 35:
+                        score_ajuste -= 0.10
+                        reglas_aplicadas.append("Fear<25 penaliza SHORT en tendencia (-10%)")
+                    else:
+                        score_ajuste -= 0.35
+                        reglas_aplicadas.append("Fear<25 bloquea SHORT sin confirmación")
+
+                # Alineación/contradicción con tendencia principal
+                if accion == "LONG" and 'BAJISTA' in tendencia_ema:
+                    if modo_mercado == "RANGE" and rsi_1h <= 25 and posicion_rango <= 20:
+                        score_ajuste -= 0.08
+                        reglas_aplicadas.append("LONG contra tendencia permitido en rango (penalizado)")
+                    else:
+                        score_ajuste -= 0.30
+                        reglas_aplicadas.append("LONG contra tendencia penalizado fuerte")
+                elif accion == "SHORT" and 'ALCISTA' in tendencia_ema:
+                    if modo_mercado == "RANGE" and rsi_1h >= 75 and posicion_rango >= 80:
+                        score_ajuste -= 0.08
+                        reglas_aplicadas.append("SHORT contra tendencia permitido en rango (penalizado)")
+                    else:
+                        score_ajuste -= 0.30
+                        reglas_aplicadas.append("SHORT contra tendencia penalizado fuerte")
+                elif accion in ["LONG", "SHORT"]:
+                    score_ajuste += 0.05
+                    reglas_aplicadas.append("Dirección alineada con tendencia")
+
+                # Confirmación/contradicción 4h
+                if ind_4h and accion in ["LONG", "SHORT"]:
                     tend_4h = (ind_4h.get('tendencia_ema', '') or '').upper()
                     if accion == "LONG" and 'BAJISTA' in tend_4h:
-                        confianza *= 0.7  # Penalizar 30%
-                        log(f"   ⚠️ 4h contradice 1h (BAJISTA vs LONG): confianza reducida a {int(confianza*100)}%")
+                        score_ajuste -= 0.15
+                        reglas_aplicadas.append("4h contradice LONG (-15%)")
                     elif accion == "SHORT" and 'ALCISTA' in tend_4h:
-                        confianza *= 0.7
-                        log(f"   ⚠️ 4h contradice 1h (ALCISTA vs SHORT): confianza reducida a {int(confianza*100)}%")
-                
+                        score_ajuste -= 0.15
+                        reglas_aplicadas.append("4h contradice SHORT (-15%)")
+                    elif (accion == "LONG" and 'ALCISTA' in tend_4h) or (accion == "SHORT" and 'BAJISTA' in tend_4h):
+                        score_ajuste += 0.05
+                        reglas_aplicadas.append("1h y 4h alineadas (+5%)")
+
+                if accion in ["LONG", "SHORT"]:
+                    confianza = max(0.0, min(0.99, confianza + score_ajuste))
+                    if LOG_DETALLADO:
+                        log(f"   🧭 Modo: {modo_mercado} | Ajuste: {score_ajuste:+.2f}")
+                        if reglas_aplicadas:
+                            log(f"   🧪 Reglas: {'; '.join(reglas_aplicadas)[:120]}")
+                else:
+                    modo_mercado = "TREND"
+
                 conf_pct = int(confianza * 100)
                 log(f"   📊 IA: {accion} | Confianza: {conf_pct}% | Temp: {temporalidad}")
                 log(f"   💭 {razon[:80]}")
-                
+
                 # Guardar oportunidad si es válida
                 if accion in ["LONG", "SHORT"] and confianza >= CONFIANZA_MINIMA:
                     oportunidades.append({
@@ -2581,6 +2666,7 @@ Responde SOLO con este JSON, sin explicación adicional:
                         'accion': accion,
                         'confianza': confianza,
                         'temporalidad': temporalidad,
+                        'modo_mercado': modo_mercado,
                         'razon': razon,
                         'precio_actual': precio_actual,
                         'volatilidad': volatilidad,
@@ -2626,11 +2712,12 @@ Responde SOLO con este JSON, sin explicación adicional:
             confianza = op['confianza']
             temporalidad = op['temporalidad']
             precio_actual = op['precio_actual']
+            modo_mercado = op.get('modo_mercado', 'TREND')
             razon = op['razon']
             indicadores = op.get('indicadores', None)  # V3.0: Obtenemos indicadores
-            
+
             conf_pct = int(confianza * 100)
-            
+
             # ═════════════════════════════════════════════════════════════════
             # V3.0: KELLY CRITERION PARA POSITION SIZING
             # Calcula el monto óptimo basándose en win-rate histórico
@@ -2640,10 +2727,14 @@ Responde SOLO con este JSON, sin explicación adicional:
                 monto = calcular_kelly(saldo_disponible, confianza)
             else:
                 monto = calcular_monto(saldo, confianza)
-            
-            # Obtener TP/SL según temporalidad
-            config = TP_SL_CONFIG.get(temporalidad, TP_SL_CONFIG["1h"])
-            
+
+            if modo_mercado == "RANGE":
+                monto *= FACTOR_MONTO_RANGO
+
+            # V5.4: TP/SL según régimen de mercado
+            config_source = TP_SL_RANGO_CONFIG if modo_mercado == "RANGE" else TP_SL_CONFIG
+            config = config_source.get(temporalidad, config_source["1h"])
+
             if accion == "LONG":
                 tp = precio_actual * (1 + config["tp"])
                 # ═════════════════════════════════════════════════════════════
@@ -2662,7 +2753,22 @@ Responde SOLO con este JSON, sin explicación adicional:
                     log(f"   📊 SL dinámico ATR: ${sl:.4f} (ATR: ${indicadores['atr']:.4f})")
                 else:
                     sl = precio_actual * (1 + config["sl"])
-            
+
+            # V5.4: Filtro EV neto (objetivo: no entrar a trades con expectativa negativa)
+            tp_pct = abs(tp - precio_actual) / precio_actual if precio_actual > 0 else 0
+            sl_pct = abs(sl - precio_actual) / precio_actual if precio_actual > 0 else 0
+            ev_neto, p_win_est = calcular_ev_neto(confianza, tp_pct, sl_pct, modo_mercado)
+            if ev_neto < EV_MINIMO:
+                log(
+                    f"   ⏭️ {symbol} omitido por EV neto bajo: {ev_neto*100:+.3f}% "
+                    f"(p_win est. {p_win_est*100:.1f}%, modo {modo_mercado})"
+                )
+                continue
+
+            monto = max(1, round(monto, 2))
+            if LOG_DETALLADO:
+                log(f"   📐 EV neto: {ev_neto*100:+.3f}% | p_win est.: {p_win_est*100:.1f}% | modo: {modo_mercado}")
+
             # Configurar apalancamiento
             configurar_apalancamiento(client, symbol, APALANCAMIENTO)
             

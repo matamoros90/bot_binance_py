@@ -132,9 +132,14 @@ def registrar_balance_diario(fecha, balance_inicio=None, balance_fin=None):
     if existe:
         if balance_fin is not None:
             c.execute("""
-                UPDATE daily_balances SET balance_fin = ?, pnl_dia = balance_fin - balance_inicio
+                UPDATE daily_balances
+                SET balance_fin = ?,
+                    pnl_dia = CASE
+                        WHEN balance_inicio IS NOT NULL THEN ? - balance_inicio
+                        ELSE 0
+                    END
                 WHERE fecha = ?
-            """, (balance_fin, fecha))
+            """, (balance_fin, balance_fin, fecha))
     else:
         c.execute("""
             INSERT INTO daily_balances (fecha, balance_inicio, balance_fin)
