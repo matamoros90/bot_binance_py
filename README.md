@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V5.4 - Multi-Timeframe + SQLite + Riesgo Cuantitativo
+# 🤖 Bot Binance Futures V5.5 - Multi-Timeframe + SQLite + Riesgo Cuantitativo
 
 ## 📋 Descripción
 
@@ -16,7 +16,7 @@ Opera 24/7 con:
 
 | Aspecto         | Estado                                 |
 | --------------- | -------------------------------------- |
-| **Versión**     | V5.4                                   |
+| **Versión**     | V5.5                                   |
 | **Plataforma**  | Koyeb (Deploy automático desde GitHub) |
 | **Modo**        | TESTNET (Pruebas)                      |
 | **Estado**      | 🟢 Operativo                           |
@@ -38,6 +38,28 @@ bot_binance_IA/
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+## ✅ V5.5 (24/02/2026) — Corrección Anti-WAIT + Fallback Técnico
+
+Mejora enfocada en eliminar bloqueos lógicos que devolvían `WAIT` de forma recurrente.
+
+### Cambios V5.5 aplicados
+
+1. **Prompt sin contradicciones duras**
+- Se reemplazaron reglas absolutas (`NUNCA SHORT`, `PROHIBIDO`) por reglas de prioridad con condiciones de confirmación.
+- Se mantiene control de riesgo, pero se evita bloqueo automático por conflicto simple.
+
+2. **Fallback técnico cuando Gemini responde WAIT**
+- Si IA responde `WAIT`, el bot evalúa un setup técnico de respaldo (EMA + RSI + MACD + posición en rango + volatilidad).
+- Si detecta ventaja clara, convierte `WAIT` en `LONG` o `SHORT` con confianza controlada.
+
+3. **Penalización Fear extremo ajustada**
+- `Fear < 25` ya no bloquea completamente SHORT; ahora penaliza más suave cuando hay confirmación bajista insuficiente.
+
+4. **Versión operativa visible en logs**
+- Logs de arranque y monitoreo pasan a mostrar `V5.5` para verificar despliegue real en Koyeb.
 
 ---
 
@@ -113,7 +135,7 @@ Con esto se evita quedar expuesto sin protección real.
 
 ---
 
-## ⚙️ Configuración Actual (V5.4)
+## ⚙️ Configuración Actual (V5.5)
 
 ```python
 CONFIANZA_MINIMA = 0.70
@@ -151,7 +173,7 @@ EV_MINIMO = 0.0008
 
 ---
 
-## 🧠 Flujo de Operación V5.4
+## 🧠 Flujo de Operación V5.5
 
 ```text
 1. Obtener Fear & Greed Index
@@ -161,11 +183,12 @@ EV_MINIMO = 0.0008
 5. Pre-filtro de mercado sin señal
 6. Gemini propone: LONG / SHORT / WAIT
 7. Validación post-IA por score (tendencia, fear, confirmación 4h)
-8. Clasificar régimen: TREND o RANGE
-9. Calcular EV neto y filtrar operaciones con expectativa baja
-10. Ejecutar orden con TP/SL
-11. Si SL falla: cierre inmediato de seguridad
-12. Monitoreo continuo + guardian + reportes diarios/semanales
+8. Si IA devuelve WAIT: evaluar fallback técnico anti-bloqueo
+9. Clasificar régimen: TREND o RANGE
+10. Calcular EV neto y filtrar operaciones con expectativa baja
+11. Ejecutar orden con TP/SL
+12. Si SL falla: cierre inmediato de seguridad
+13. Monitoreo continuo + guardian + reportes diarios/semanales
 ```
 
 ---

@@ -28,6 +28,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
+BOT_VERSION = "V5.5"
 CONFIANZA_MINIMA = 0.70   # 70% - V3.7: Aumentado para mayor selectividad
 ESCUDO_TRABAJO = 0.80     # 80% del balance disponible para trading
 ESCUDO_SEGURO = 0.20      # 20% protegido
@@ -220,7 +221,7 @@ def servidor_salud():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"BINANCE BOT V5.0 - RESET INTELIGENTE + ANTI-TENDENCIA")
+            self.wfile.write(f"BINANCE BOT {BOT_VERSION} - SCORE + EV + FALLBACK".encode())
         def log_message(self, format, *args):
             pass
     try:
@@ -1134,6 +1135,50 @@ def calcular_ev_neto(confianza, tp_pct, sl_pct, modo_mercado="TREND"):
     ev_neto = ev_bruto - costos_estimados
 
     return ev_neto, p_win
+
+
+def generar_senal_fallback(ind_1h, ind_4h, posicion_rango, fg_valor):
+    """Genera señal técnica de respaldo cuando la IA responde WAIT."""
+    if not ind_1h:
+        return None, 0.0, None, "Sin datos de indicadores"
+
+    t1 = (ind_1h.get('tendencia_ema', '') or '').upper()
+    t4 = (ind_4h.get('tendencia_ema', '') or '').upper() if ind_4h else ''
+    rsi = float(ind_1h.get('rsi', 50))
+    macd_hist = float((ind_1h.get('macd') or {}).get('histograma', 0))
+    atr_pct = float(ind_1h.get('atr_percent', 0))
+    vol_rel = float(ind_1h.get('volumen_relativo', 1))
+
+    # Evita entrar cuando el mercado está prácticamente inmóvil
+    if atr_pct < 0.25:
+        return None, 0.0, None, "Volatilidad insuficiente para fallback"
+
+    # Continuación bajista
+    if 'BAJISTA' in t1 and (not t4 or 'BAJISTA' in t4):
+        if 38 <= rsi <= 62 and posicion_rango >= 55 and macd_hist < 0:
+            conf = 0.72 + (0.03 if 'BAJISTA' in t4 else 0) + (0.02 if vol_rel >= 1.10 else 0)
+            if fg_valor < 25:
+                conf -= 0.03
+            conf = max(0.70, min(0.85, conf))
+            return "SHORT", conf, "1h", "Fallback técnico: continuación bajista (EMA+MACD+rango)"
+
+    # Continuación alcista
+    if 'ALCISTA' in t1 and (not t4 or 'ALCISTA' in t4):
+        if 38 <= rsi <= 62 and posicion_rango <= 45 and macd_hist > 0:
+            conf = 0.72 + (0.03 if 'ALCISTA' in t4 else 0) + (0.02 if vol_rel >= 1.10 else 0)
+            if fg_valor > 75:
+                conf -= 0.03
+            conf = max(0.70, min(0.85, conf))
+            return "LONG", conf, "1h", "Fallback técnico: continuación alcista (EMA+MACD+rango)"
+
+    # Reversión extrema (muy selectiva)
+    if fg_valor <= 12 and rsi <= 20 and posicion_rango <= 15 and macd_hist > -0.005:
+        return "LONG", 0.70, "1h", "Fallback técnico: sobreventa extrema + fear extremo"
+
+    if fg_valor >= 88 and rsi >= 80 and posicion_rango >= 85 and macd_hist < 0.005:
+        return "SHORT", 0.70, "1h", "Fallback técnico: sobrecompra extrema + greed extremo"
+
+    return None, 0.0, None, "Sin setup fallback de alta convicción"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONEXIÓN A BINANCE
@@ -2496,11 +2541,11 @@ Analiza TODOS los indicadores y las velas crudas antes de decidir.
 
 MERCADO GLOBAL:
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-25: Extreme Fear (oportunidad de compra, NUNCA SHORT)
-- 26-45: Fear (considerar LONGs en soportes)
+- 0-25: Extreme Fear (sesgo LONG; SHORT permitido solo con confirmación bajista fuerte)
+- 26-45: Fear (favorecer LONGs en soporte)
 - 46-55: Neutral
-- 56-75: Greed (precaución con LONGs)
-- 76-100: Extreme Greed (preferir SHORTs o WAIT)
+- 56-75: Greed (favorecer SHORTs tácticos)
+- 76-100: Extreme Greed (sesgo SHORT; LONG solo con confirmación alcista fuerte)
 
 ══════════════════════════════════
 ANÁLISIS COMPLETO DE {symbol}
@@ -2526,19 +2571,20 @@ Coteja estos datos con los indicadores calculados arriba.
 ══════════════════════════════════
 {velas_csv}
 
-REGLAS ESTRICTAS:
-1. Confianza mínima: 70%
-2. NUNCA operar CONTRA la tendencia EMA dominante
-3. Si tendencia ALCISTA → solo LONG o WAIT (PROHIBIDO SHORT)
-4. Si tendencia BAJISTA → solo SHORT o WAIT (PROHIBIDO LONG)
-5. Si Fear < 25 → SOLO LONGs o WAIT (NUNCA SHORT)
-6. Si Greed > 75 → PREFERIR SHORTs o WAIT
-7. Si precio en 20% inferior del rango → considerar LONG
-8. Si precio en 80% superior del rango → considerar SHORT
-9. Si MACD histograma cambia de signo → confirma entrada
-10. Si ambas temporalidades (1h y 4h) coinciden en dirección → mayor confianza
-11. Si divergencia entre RSI y precio → señal fuerte
-12. Elige temporalidad: 1h si volatilidad >2%, 4h si volatilidad <2%
+REGLAS OPERATIVAS:
+1. Confianza objetivo para ejecutar: >= 70%.
+2. Prioriza operar a favor de la tendencia EMA dominante.
+3. Tendencia ALCISTA: prioriza LONG; SHORT solo con sobrecompra extrema + confirmación de reversión.
+4. Tendencia BAJISTA: prioriza SHORT; LONG solo con sobreventa extrema + confirmación de reversión.
+5. Fear < 25: favorece LONG; SHORT permitido si 1h y 4h están bajistas, RSI > 35 y MACD hist < 0.
+6. Greed > 75: favorece SHORT; LONG permitido si 1h y 4h están alcistas, RSI < 65 y MACD hist > 0.
+7. Si precio en 20% inferior del rango: favorece LONG.
+8. Si precio en 80% superior del rango: favorece SHORT.
+9. Confirma con MACD y volumen relativo cuando sea posible.
+10. Si 1h y 4h coinciden en dirección, aumenta convicción.
+11. Si hay divergencia RSI-precio, considérala como confirmación adicional.
+12. Usa WAIT solo si no existe ventaja estadística clara.
+13. Si hay conflicto simple, elige la dirección con mayor probabilidad en vez de bloquearte.
 
 Responde SOLO con este JSON, sin explicación adicional:
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve"}}"""
@@ -2593,8 +2639,21 @@ Responde SOLO con este JSON, sin explicación adicional:
                 if temporalidad not in TEMPORALIDADES:
                     temporalidad = '1h'
 
+                # V5.5: Fallback técnico cuando IA responde WAIT
+                if accion == "WAIT":
+                    accion_fb, conf_fb, temp_fb, razon_fb = generar_senal_fallback(
+                        ind_1h, ind_4h, posicion_rango, fg_valor
+                    )
+                    if accion_fb:
+                        accion = accion_fb
+                        confianza = max(confianza, conf_fb)
+                        if temp_fb:
+                            temporalidad = temp_fb
+                        razon = f"{razon_fb}. IA original: WAIT."
+                        log(f"   🔁 Fallback activado: {accion} ({int(confianza*100)}%)")
+
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.4: VALIDACIÓN POST-IA con score (evita bloqueo total)
+                # V5.5: VALIDACIÓN POST-IA con score (evita bloqueo total)
                 # ═══════════════════════════════════════════════════════════════════
                 tendencia_ema = (ind_1h.get('tendencia_ema', '') or '').upper()
                 rsi_1h = ind_1h.get('rsi', 50)
@@ -2611,8 +2670,8 @@ Responde SOLO con este JSON, sin explicación adicional:
                         score_ajuste -= 0.10
                         reglas_aplicadas.append("Fear<25 penaliza SHORT en tendencia (-10%)")
                     else:
-                        score_ajuste -= 0.35
-                        reglas_aplicadas.append("Fear<25 bloquea SHORT sin confirmación")
+                        score_ajuste -= 0.22
+                        reglas_aplicadas.append("Fear<25 penaliza SHORT sin confirmación fuerte")
 
                 # Alineación/contradicción con tendencia principal
                 if accion == "LONG" and 'BAJISTA' in tendencia_ema:
@@ -2814,7 +2873,7 @@ Responde SOLO con este JSON, sin explicación adicional:
 # ═══════════════════════════════════════════════════════════════════════════════
 def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
     """Genera un reporte detallado del estado inicial del bot"""
-    reporte = f"""🤖 *BINANCE BOT V5.0 ONLINE*
+    reporte = f"""🤖 *BINANCE BOT {BOT_VERSION} ONLINE*
 🚀 BINANCE FUTUROS: `{status_gemini}`
 
 💰 *BALANCE DETECTADO:*
@@ -2830,7 +2889,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V5.0:*
+🆕 *FUNCIONES V5.5:*
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `{', '.join(TEMPORALIDADES)}`
@@ -2851,7 +2910,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
-log("🚀 Iniciando Bot Binance Futuros V5.0...")
+log(f"🚀 Iniciando Bot Binance Futuros {BOT_VERSION}...")
 log("📊 Daily Summary + Guardian System + New GenAI SDK")
 
 # Conexión a Binance
@@ -2913,7 +2972,7 @@ if pos_iniciales > 0:
 else:
     log("✅ Sin posiciones abiertas. Listo para operar.")
 
-log("✅ Bot V5.0 iniciado. Guardian + SL Coherence + Resumen Semanal activos...")
+log(f"✅ Bot {BOT_VERSION} iniciado. Guardian + SL Coherence + Resumen Semanal activos...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BUCLE PRINCIPAL - 24/7 CON MONITOREO CONTINUO + GUARDIAN + RESUMEN SEMANAL
@@ -3009,7 +3068,7 @@ while True:
             # Log de monitoreo controlado por intervalo para evitar ruido
             if should_run_task("log_monitoreo", INTERVALO_RESUMEN_POSICIONES) or ciclo_analisis == 1:
                 pos_abiertas = contar_posiciones_abiertas(client)
-                log(f"👁️ Monitoreo V5.0... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
+                log(f"👁️ Monitoreo {BOT_VERSION}... Posiciones: {pos_abiertas}/{MAX_POSICIONES}")
                 if pos_abiertas > 0:
                     log_resumen_posiciones(client)
         
