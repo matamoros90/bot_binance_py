@@ -12,7 +12,7 @@ Opera 24/7 con:
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 24/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 25/02/2026)
 
 | Aspecto         | Estado                                 |
 | --------------- | -------------------------------------- |
@@ -63,6 +63,23 @@ Mejora enfocada en eliminar bloqueos lógicos que devolvían `WAIT` de forma rec
 
 5. **Calibración de umbral de ejecución**
 - `CONFIANZA_MINIMA` se ajusta de `70%` a `66%` para reducir rechazos marginales (60-69%) sin desactivar filtros de riesgo.
+
+---
+
+## ✅ Ajuste sencillo de riesgo (25/02/2026) — 5% fijo por operación
+
+Simplificación para que el bot sea más fácil de entender y recalibrar:
+
+1. **Tamaño de posición simple**
+- Cada operación usa un **5% fijo del balance operativo actual** (compounding natural).
+- La confianza de la IA solo decide **si entrar o no**, no escala agresivamente el tamaño.
+
+2. **Umbral de confianza más flexible**
+- `CONFIANZA_MINIMA` pasa de `0.66` a `0.60` para permitir más operaciones en entornos mixtos.
+
+3. **EV como métrica informativa**
+- `EV_MINIMO` se pone en `0.0`: el EV se sigue calculando y registrando en logs, pero ya **no bloquea** operaciones por sí solo.
+- Los filtros de riesgo principales siguen siendo: TP/SL, Guardian y drawdown diario.
 
 ---
 
@@ -138,11 +155,11 @@ Con esto se evita quedar expuesto sin protección real.
 
 ---
 
-## ⚙️ Configuración Actual (V5.5)
+## ⚙️ Configuración Actual (V5.5 + ajuste 25/02/2026)
 
 ```python
-CONFIANZA_MINIMA = 0.66
-ESCUDO_TRABAJO = 0.80
+CONFIANZA_MINIMA = 0.60          # 60% - umbral de ejecución
+ESCUDO_TRABAJO = 1.00           # 100% del balance como base de cálculo
 APALANCAMIENTO = 3
 TOP_ACTIVOS = 15
 MAX_POSICIONES = 3
@@ -164,7 +181,7 @@ TP_SL_RANGO_CONFIG = {"1h": {"tp": 0.02, "sl": 0.015}, "4h": {"tp": 0.03, "sl": 
 FACTOR_MONTO_RANGO = 0.70
 FEE_ROUNDTRIP_EST = 0.0012
 SLIPPAGE_EST = 0.0006
-EV_MINIMO = 0.0008
+EV_MINIMO = 0.0                  # EV solo informativo (no filtro duro)
 ```
 
 ## 📊 TP/SL por Régimen

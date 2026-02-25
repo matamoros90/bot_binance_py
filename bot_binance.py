@@ -29,9 +29,9 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V5.5"
-CONFIANZA_MINIMA = 0.66   # 66% - V5.5: calibrado para reducir bloqueos en WAIT
-ESCUDO_TRABAJO = 0.80     # 80% del balance disponible para trading
-ESCUDO_SEGURO = 0.20      # 20% protegido
+CONFIANZA_MINIMA = 0.60   # 60% - Umbral mas simple para generar mas operaciones
+ESCUDO_TRABAJO = 1.00     # 100% del balance disponible como base de calculo de monto
+ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
 APALANCAMIENTO = 3        # Apalancamiento conservador x3
@@ -156,7 +156,7 @@ FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
 # V5.4: Filtro financiero mínimo por operación (EV neto)
 FEE_ROUNDTRIP_EST = 0.0012        # 0.12% estimado ida+vuelta
 SLIPPAGE_EST = 0.0006             # 0.06% slippage conservador
-EV_MINIMO = 0.0008                # 0.08% mínimo neto esperado para ejecutar
+EV_MINIMO = 0.0                   # Desactivado: solo se usa EV como informacion, no como filtro duro
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FEAR & GREED INDEX
@@ -1082,44 +1082,23 @@ def actualizar_stats_trade(pnl):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CÁLCULO DE MONTO (Escudo 80/20) - Entre 2% y 10%
+# CÁLCULO DE MONTO SIMPLE - 5% FIJO DEL BALANCE
 # ═══════════════════════════════════════════════════════════════════════════════
 def calcular_monto(saldo, confianza):
-    """V5.2: Calcula monto con interés compuesto — reinvierte ganancias, protege en pérdidas.
+    """Calcula un monto fijo del 5% del saldo operativo.
     
-    Fórmula base: Porcentaje 2-10% del balance disponible según confianza.
-    Interés compuesto:
-    - Si balance creció vs BALANCE_INICIAL_PROYECTO → escalar porcentaje hasta 1.5x
-    - Si balance bajó → reducir porcentaje hasta 0.5x (protección)
-    - Cap de seguridad: nunca más del 12% del balance disponible
+    - Usa el 100% del balance para el ESCUDO_TRABAJO (1.0).
+    - El interés compuesto ocurre de forma natural: a mayor saldo, mayor monto en USD.
+    - La confianza de la IA se usa solo para decidir si entrar o no (CONFIANZA_MINIMA),
+      no para escalar agresivamente el tamaño de la posición.
     """
     saldo_disponible = saldo * ESCUDO_TRABAJO
-    # Mapear confianza 66%-100% a porcentaje base 2%-10%
-    rango_confianza = 1.0 - CONFIANZA_MINIMA  # 0.34
-    exceso = max(0, confianza - CONFIANZA_MINIMA)  # 0 a 0.34
-    porcentaje_base = 2 + (exceso / rango_confianza) * 8  # 2% a 10%
-    porcentaje_base = min(10, max(2, porcentaje_base))
-    
-    # V5.2: Factor de interés compuesto
-    ganancia_acumulada = saldo - BALANCE_INICIAL_PROYECTO
-    if ganancia_acumulada > 0 and saldo > BALANCE_INICIAL_PROYECTO:
-        # Balance creció → escalar posiciones proporcionalmente (interés compuesto)
-        # Ejemplo: balance creció 20% → factor = 1.20 (cap 1.50)
-        factor_compuesto = min(1.5, 1 + (ganancia_acumulada / BALANCE_INICIAL_PROYECTO))
-        porcentaje = porcentaje_base * factor_compuesto
-        porcentaje = min(12, porcentaje)  # Cap de seguridad en 12%
-    else:
-        # Balance bajó → reducir posiciones (protección anti-pérdida)
-        # Ejemplo: balance bajó 30% → factor = 0.70 (mín 0.50)
-        factor_desgaste = max(0.5, saldo / BALANCE_INICIAL_PROYECTO) if BALANCE_INICIAL_PROYECTO > 0 else 1.0
-        porcentaje = porcentaje_base * factor_desgaste
-    
-    monto = saldo_disponible * (porcentaje / 100)
-    
+    porcentaje = 5.0  # 5% fijo por operación sobre el saldo disponible
+    monto = saldo_disponible * (porcentaje / 100.0)
+
     if LOG_DETALLADO:
-        factor = porcentaje / porcentaje_base if porcentaje_base > 0 else 1
-        log(f"   💰 Interés compuesto: factor {factor:.2f}x | base {porcentaje_base:.1f}% → ajustado {porcentaje:.1f}% | ${monto:.2f}")
-    
+        log(f"   💰 Monto fijo: {porcentaje:.1f}% del saldo operativo | ${monto:.2f}")
+
     return max(1, round(monto, 2))
 
 
