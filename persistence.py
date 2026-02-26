@@ -7,7 +7,12 @@ import os
 import math
 from datetime import datetime, timedelta
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trades.db")
+# Directorio base para la base de datos.
+# - En local: por defecto, la misma carpeta del proyecto.
+# - En Koyeb: configurar la variable de entorno DATA_DIR apuntando al volumen persistente.
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "trades.db")
 
 
 def _get_conn():

@@ -242,6 +242,7 @@ requests
 BINANCE_API_KEY=tu_api_key
 BINANCE_SECRET=tu_api_secret
 BINANCE_TESTNET=True
+DATA_DIR=/data/trades          # Ruta del volumen persistente en Koyeb (ejemplo)
 API_KEY_GEMINI=tu_gemini_api_key
 TELEGRAM_TOKEN=tu_bot_token
 TELEGRAM_CHAT_ID=tu_chat_id
