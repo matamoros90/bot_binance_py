@@ -2482,10 +2482,11 @@ def ejecutar_trading(client, gemini_client):
                 
                 # ═══════════════════════════════════════════════════════════════════
                 # V5.3: PREPARAR LAS 200 VELAS CRUDAS para cotejo completo
-                # Gemini puede cotejar patrones en las velas vs los indicadores
-                # ═══════════════════════════════════════════════════════════════════
+                # Gemini puede cotejar patrones en las velas vs los indicadores.
+                # Para el modelo usamos solo las últimas ~120 velas 1h para no saturar el prompt.
+                velas_prompt = velas_1h[-120:] if len(velas_1h) > 120 else velas_1h
                 velas_csv_lines = []
-                for v in velas_1h:
+                for v in velas_prompt:
                     velas_csv_lines.append(
                         f"{v['open']:.6f},{v['high']:.6f},{v['low']:.6f},{v['close']:.6f},{v['volume']:.0f}"
                     )
@@ -2516,11 +2517,11 @@ TEMPORALIDAD 4H (100 velas = ~17 días)
 - Volatilidad: {vol_4h:.2f}% | Pos en rango: {rango_4h:.1f}%"""
                 
                 prompt = f"""Eres un trader profesional de criptomonedas con análisis técnico y fundamental.
-Analiza TODOS los indicadores y las velas crudas antes de decidir.
+Analiza primero los INDICADORES y usa las velas crudas solo para confirmar patrones.
 
 MERCADO GLOBAL:
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-25: Extreme Fear (sesgo LONG; SHORT permitido solo con confirmación bajista fuerte)
+- 0-25: Extreme Fear (sesgo LONG; los SHORTs necesitan confirmación bajista clara, pero no están prohibidos)
 - 26-45: Fear (favorecer LONGs en soporte)
 - 46-55: Neutral
 - 56-75: Greed (favorecer SHORTs tácticos)
@@ -2544,26 +2545,25 @@ TEMPORALIDAD 1H (200 velas = ~8 días)
 {bloque_4h}
 
 ══════════════════════════════════
-LAS 200 VELAS 1H COMPLETAS (open,high,low,close,volume)
+LAS 120 VELAS 1H MÁS RECIENTES (open,high,low,close,volume)
 Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
-Coteja estos datos con los indicadores calculados arriba.
+Úsalas para confirmar o invalidar la lectura de los indicadores anteriores.
 ══════════════════════════════════
 {velas_csv}
 
 REGLAS OPERATIVAS:
-1. Confianza objetivo para ejecutar: >= 66%.
+1. Confianza objetivo para ejecutar: normalmente >= 60% (no seas más alto sin motivo).
 2. Prioriza operar a favor de la tendencia EMA dominante.
-3. Tendencia ALCISTA: prioriza LONG; SHORT solo con sobrecompra extrema + confirmación de reversión.
-4. Tendencia BAJISTA: prioriza SHORT; LONG solo con sobreventa extrema + confirmación de reversión.
-5. Fear < 25: favorece LONG; SHORT permitido si 1h y 4h están bajistas, RSI > 35 y MACD hist < 0.
-6. Greed > 75: favorece SHORT; LONG permitido si 1h y 4h están alcistas, RSI < 65 y MACD hist > 0.
-7. Si precio en 20% inferior del rango: favorece LONG.
-8. Si precio en 80% superior del rango: favorece SHORT.
-9. Confirma con MACD y volumen relativo cuando sea posible.
-10. Si 1h y 4h coinciden en dirección, aumenta convicción.
-11. Si hay divergencia RSI-precio, considérala como confirmación adicional.
-12. Usa WAIT solo si no existe ventaja estadística clara.
-13. Si hay conflicto simple, elige la dirección con mayor probabilidad en vez de bloquearte.
+3. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra clara (RSI alto, precio en parte alta del rango) + patrón de reversión en velas.
+4. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay sobreventa clara (RSI bajo, precio en parte baja del rango) + patrón de rebote en velas.
+5. Fear < 25: favorece LONG; acepta SHORT solo si 1h y 4h son bajistas y MACD/volumen apoyan la caída.
+6. Greed > 75: favorece SHORT; acepta LONG solo si 1h y 4h son alcistas y MACD/volumen apoyan la subida.
+7. Si precio en 20% inferior del rango y RSI < 40: favorece LONG.
+8. Si precio en 80% superior del rango y RSI > 60: favorece SHORT.
+9. Confirma siempre que puedas con MACD (histograma) y volumen relativo.
+10. Si 1h y 4h coinciden en dirección, aumenta convicción y confianza.
+11. Usa WAIT solo cuando TODO esté muy neutro: RSI entre 45-55, tendencia lateral en 1h y 4h, volatilidad y volumen bajos y sin patrones claros en velas.
+12. Si hay conflicto leve entre 1h y 4h, NO te bloquees: elige la dirección con mayor probabilidad según indicadores y contexto de Fear & Greed.
 
 Responde SOLO con este JSON, sin explicación adicional:
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve"}}"""
