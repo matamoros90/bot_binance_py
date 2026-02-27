@@ -1709,13 +1709,13 @@ def verificar_ordenes_sl_existen(client):
                 if tiene_sl and sl_precio_encontrado and sl_precio_encontrado > 0:
                     # V3.9: VALIDAR COHERENCIA del SL
                     sl_coherente = True
-                    if side == 'LONG' and sl_precio_encontrado > entry_price * 1.01:
-                        # SL de un LONG está ARRIBA del entry → INCOHERENTE
-                        log(f"⛔ {symbol} LONG: SL en ${sl_precio_encontrado:.2f} está ARRIBA del entry ${entry_price:.2f} → INCOHERENTE")
+                    if side == 'LONG' and sl_precio_encontrado > mark_price * 1.01:
+                        # SL de un LONG está ARRIBA del mark_price → INCOHERENTE (Binance lo rechazaría de todos modos)
+                        log(f"⛔ {symbol} LONG: SL en ${sl_precio_encontrado:.2f} está ARRIBA del mark ${mark_price:.2f} → INCOHERENTE")
                         sl_coherente = False
-                    elif side == 'SHORT' and sl_precio_encontrado < entry_price * 0.99:
-                        # SL de un SHORT está DEBAJO del entry → INCOHERENTE
-                        log(f"⛔ {symbol} SHORT: SL en ${sl_precio_encontrado:.2f} está DEBAJO del entry ${entry_price:.2f} → INCOHERENTE")
+                    elif side == 'SHORT' and sl_precio_encontrado < mark_price * 0.99:
+                        # SL de un SHORT está DEBAJO del mark_price → INCOHERENTE
+                        log(f"⛔ {symbol} SHORT: SL en ${sl_precio_encontrado:.2f} está DEBAJO del mark ${mark_price:.2f} → INCOHERENTE")
                         sl_coherente = False
                     
                     if sl_coherente:
@@ -1740,28 +1740,21 @@ def verificar_ordenes_sl_existen(client):
                         sl_precio = max(sl_objetivo_entry, mark_price * 1.005)
                         sl_side = 'BUY'
                     
-                    log_throttled(
-                        f"sl_missing_{symbol}",
-                        f"⚠️ {symbol} SIN orden SL válida. SL emergencia objetivo(entry): ${sl_objetivo_entry:.4f} | aplicado: ${sl_precio:.4f}",
-                        120
-                    )
-                    
+                    # Intentar crear SL de forma silenciosa primero
                     success, already_protected = crear_orden_sl(client, symbol, sl_side, sl_precio, abs(cantidad))
                     
                     if success:
-                        log(f"✅ SL de emergencia creado para {symbol}")
+                        log(f"⚠️ {symbol} SIN orden SL válida. SL emergencia objetivo(entry): ${sl_objetivo_entry:.4f} | aplicado: ${sl_precio:.4f}")
+                        log(f"✅ SL de emergencia creado exitosamente para {symbol}")
                         _sl_verificados[symbol] = time.time()
                         _sl_retry_cooldown_until.pop(symbol, None)
                     elif already_protected:
                         # V5.2 FIX: -4045 = max stop orders, -4130 = closePosition order exist
-                        # Aceptar como protegido directamente (rompe el bucle infinito anterior)
-                        _sl_verificados[symbol] = time.time()
+                        # Aceptar como protegido directamente y dar un TTL mayor para no golpear la API
+                        _sl_verificados[symbol] = time.time() + 3600  # Darle 1 hora de TTL extra si está protegido por UI
                         _sl_retry_cooldown_until.pop(symbol, None)
-                        log_throttled(
-                            f"sl_protected_accepted_{symbol}",
-                            f"✅ {symbol}: Fallo por protección previa (-4045/-4130) aceptado. SL verificado.",
-                            300
-                        )
+                        # Reducir el logging innecesario para evitar confusión
+                        pass
                     else:
                         _sl_retry_cooldown_until[symbol] = time.time() + SL_REINTENTO_COOLDOWN
                         log_throttled(
@@ -2159,11 +2152,11 @@ def verificar_posiciones_cerradas(client):
             # Marcar como procesado
             posiciones_notificadas.add(unique_key)
             
-            # Limpiar set si crece demasiado (evitar memory leak)
-            if len(posiciones_notificadas) > 200:
-                posiciones_notificadas.clear()  # V5.2: Reset completo (set no tiene orden)
-            
-            # ═══════════════════════════════════════════════════════════════
+            # Limpiar set si crece demasiado (evitar memory leak sin borrar recentes)
+            if len(posiciones_notificadas) > 5000:
+                # Convertir a lista y quedarse con la mitad más reciente sería ideal, 
+                # pero para evitar PnL duplicado en loop actual no usamos clear().
+                posiciones_notificadas = set(list(posiciones_notificadas)[-2500:])
             # ACUMULAR ESTADÍSTICAS SEMANALES (V3.0)
             # ═══════════════════════════════════════════════════════════════
             if pnl > 0:
