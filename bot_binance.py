@@ -1390,9 +1390,9 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             return True, False
         except Exception as trad_error:
             trad_str = str(trad_error)
-            if '-4045' in trad_str:
+            if '-4045' in trad_str or '-4130' in trad_str:
                 # V5.2: Log siempre (antes bloqueado por LOG_DETALLADO)
-                log_throttled(f"sl_4045_trad_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 al crear SL tradicional", 120)
+                log_throttled(f"sl_already_protected_trad_{symbol}", f"   ⚠️ {symbol}: Binance reporta protección existente (-4045/-4130) al crear SL tradicional", 120)
                 return False, True  # already_protected
             
             # Fallback: Algo Order API
@@ -1408,15 +1408,16 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
                 )
                 return True, False
             except Exception as algo_error:
-                if '-4045' in str(algo_error):
-                    log_throttled(f"sl_4045_algo_{symbol}", f"   ⚠️ {symbol}: Binance reporta -4045 también en Algo Order", 120)
+                algo_str = str(algo_error)
+                if '-4045' in algo_str or '-4130' in algo_str:
+                    log_throttled(f"sl_already_protected_algo_{symbol}", f"   ⚠️ {symbol}: Binance reporta protección existente (-4045/-4130) en Algo Order", 120)
                     return False, True
                 log(f"   ⚠️ Algo Order también falló: {algo_error}")
                 return False, False
                 
     except Exception as e:
         error_str = str(e)
-        if '-4045' in error_str:
+        if '-4045' in error_str or '-4130' in error_str:
             return False, True
         log(f"⚠️ Error creando SL: {e}")
         return False, False
@@ -1688,8 +1689,8 @@ def verificar_ordenes_sl_existen(client):
                                 tiene_sl = True
                                 sl_precio_encontrado = float(o.get('triggerPrice', 0) or o.get('stopPrice', 0) or 0)
                                 break
-                except Exception:
-                    pass
+                except Exception as e:
+                    log(f"⚠️ Exception in futures_get_open_algo_orders para {symbol}: {e}")
                 
                 # 2. Buscar en órdenes tradicionales
                 if not tiene_sl:
@@ -1702,8 +1703,8 @@ def verificar_ordenes_sl_existen(client):
                                     tiene_sl = True
                                     sl_precio_encontrado = float(o.get('stopPrice', 0) or o.get('triggerPrice', 0) or 0)
                                     break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log(f"⚠️ Exception in futures_get_open_orders para {symbol}: {e}")
                 
                 if tiene_sl and sl_precio_encontrado and sl_precio_encontrado > 0:
                     # V3.9: VALIDAR COHERENCIA del SL
@@ -1752,13 +1753,13 @@ def verificar_ordenes_sl_existen(client):
                         _sl_verificados[symbol] = time.time()
                         _sl_retry_cooldown_until.pop(symbol, None)
                     elif already_protected:
-                        # V5.2 FIX: -4045 = Binance confirma que max stop orders fue alcanzado
+                        # V5.2 FIX: -4045 = max stop orders, -4130 = closePosition order exist
                         # Aceptar como protegido directamente (rompe el bucle infinito anterior)
                         _sl_verificados[symbol] = time.time()
                         _sl_retry_cooldown_until.pop(symbol, None)
                         log_throttled(
-                            f"sl_4045_accepted_{symbol}",
-                            f"✅ {symbol}: -4045 aceptado como protegido (max stop orders alcanzado)",
+                            f"sl_protected_accepted_{symbol}",
+                            f"✅ {symbol}: Fallo por protección previa (-4045/-4130) aceptado. SL verificado.",
                             300
                         )
                     else:
