@@ -1391,8 +1391,8 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
         except Exception as trad_error:
             trad_str = str(trad_error)
             if '-4045' in trad_str or '-4130' in trad_str:
-                # V5.2: Log siempre (antes bloqueado por LOG_DETALLADO)
-                log_throttled(f"sl_already_protected_trad_{symbol}", f"   ⚠️ {symbol}: Binance reporta protección existente (-4045/-4130) al crear SL tradicional", 120)
+                # Silenciado error -4045/-4130 como solicitado en el Motor de Scalping
+                # para evitar spam cuando se persigue el precio muy de cerca.
                 return False, True  # already_protected
             
             # Fallback: Algo Order API
@@ -1410,7 +1410,7 @@ def crear_orden_sl(client, symbol, side, precio, cantidad):
             except Exception as algo_error:
                 algo_str = str(algo_error)
                 if '-4045' in algo_str or '-4130' in algo_str:
-                    log_throttled(f"sl_already_protected_algo_{symbol}", f"   ⚠️ {symbol}: Binance reporta protección existente (-4045/-4130) en Algo Order", 120)
+                    # Silenciado error -4045/-4130 en la API secundaria también
                     return False, True
                 log(f"   ⚠️ Algo Order también falló: {algo_error}")
                 return False, False
@@ -1529,6 +1529,33 @@ def guardian_posiciones(client):
             else:
                 pnl_porcentaje = 0
             
+            # ═══════════════════════════════════════════════════════════════════
+            # MOTOR DE SCALPING (COBRAR GANANCIAS RÁPIDAS $5.00)
+            # ═══════════════════════════════════════════════════════════════════
+            SCALPING_TARGET = 5.00
+            if unrealized_pnl >= SCALPING_TARGET:
+                side = 'SELL' if cantidad > 0 else 'BUY'
+                
+                log(f"⚡ SCALPING: {symbol} alcanzó ganancia rápida (${unrealized_pnl:.2f})")
+                log(f"⚡ CERRANDO POSICIÓN PARA ASEGURAR GANANCIA: {symbol}")
+                
+                try:
+                    # Cancelar todas las órdenes pendientes primero
+                    client.futures_cancel_all_open_orders(symbol=symbol)
+                    
+                    # Cerrar la posición a mercado
+                    client.futures_create_order(
+                        symbol=symbol,
+                        side=side,
+                        type='MARKET',
+                        quantity=abs(cantidad)
+                    )
+                    
+                    log(f"✅ Posición {symbol} cerrada por Scalping. PNL: ${unrealized_pnl:.2f}")
+                    continue  # Saltar el resto de comprobaciones para este símbolo
+                except Exception as e:
+                    log(f"❌ Error cerrando posición por Scalping {symbol}: {e}")
+
             # ═══════════════════════════════════════════════════════════════════
             # CIERRE DE EMERGENCIA POR PÉRDIDA MÁXIMA (-10%)
             # ═══════════════════════════════════════════════════════════════════
@@ -2247,129 +2274,55 @@ def enviar_resumen_diario(client):
 
 def enviar_resumen_semanal(client):
     """
-    Genera y envía un resumen semanal por Telegram.
-    
-    Este resumen incluye:
-    - Balance inicial del proyecto (04/01/2026): $5,293.49
-    - Balance actual de la cuenta
-    - Diferencia en USD desde el inicio del proyecto
-    - ROI total del proyecto (%)
-    - Estadísticas de la semana (trades ganados/perdidos)
-    - ROI de la semana actual
-    
-    El resumen se envía cada viernes a las 18:00 y las estadísticas
-    semanales se reinician para la nueva semana.
+    Genera y envía un resumen semanal por Telegram (WOW Summary V5.6).
+    Se envía cada viernes a las 18:00 (Guatemala).
     """
     global stats_semanales
     try:
-        # Obtener fecha actual formateada
-        fecha_actual = hora_local().strftime("%d/%m/%Y")
-        
-        # Obtener balance actual de Binance
+        # Obtener balance actual
         balance_actual = obtener_balance(client)
         
-        # ═══════════════════════════════════════════════════════════════════
-        # CÁLCULO DE ROI TOTAL DEL PROYECTO
-        # ═══════════════════════════════════════════════════════════════════
-        # Ganancia total = Balance actual - Balance inicial del proyecto
-        ganancia_total = balance_actual - BALANCE_INICIAL_PROYECTO
+        # Obtener métricas de la base de datos (últimos 7 días)
+        metricas_semanales = calcular_metricas_riesgo(dias=7)
         
-        # ROI Total = (Ganancia / Balance Inicial) * 100
-        # Ejemplo: ($6,307 - $5,293) / $5,293 * 100 = 19.15%
-        roi_total = (ganancia_total / BALANCE_INICIAL_PROYECTO) * 100
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # CÁLCULO DE ESTADÍSTICAS SEMANALES
-        # ═══════════════════════════════════════════════════════════════════
-        # Resultado neto de la semana = Ganancias - Pérdidas
-        resultado_semana = stats_semanales["monto_ganado"] - stats_semanales["monto_perdido"]
-        
-        # Emoji según resultado positivo o negativo
-        emoji_semana = "💹" if resultado_semana >= 0 else "📉"
-        emoji_total = "💹" if ganancia_total >= 0 else "📉"
-        
-        # Calcular ROI semanal si hay balance inicial de semana
-        if stats_semanales["balance_inicio_semana"] > 0:
-            roi_semanal = (resultado_semana / stats_semanales["balance_inicio_semana"]) * 100
-        else:
-            roi_semanal = 0
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # V5.2: INTERÉS COMPUESTO — Proyecciones a corto y largo plazo
-        # ═══════════════════════════════════════════════════════════════════
-        FECHA_INICIO_PROYECTO = datetime(2026, 2, 9)  # V3.7 reset
-        dias_operando = max(1, (hora_local().replace(tzinfo=None) - FECHA_INICIO_PROYECTO).days)
-        
-        if balance_actual > 0 and BALANCE_INICIAL_PROYECTO > 0:
-            # Tasa diaria compuesta: (balance_final / balance_inicial) ^ (1/días) - 1
-            factor_diario = (balance_actual / BALANCE_INICIAL_PROYECTO) ** (1 / dias_operando)
-            tasa_diaria_pct = (factor_diario - 1) * 100
+        # Balance Inicial (usando el del proyecto o el inicio de semana)
+        balance_inicial = stats_semanales.get("balance_inicio_semana", BALANCE_INICIAL_PROYECTO)
+        if balance_inicial <= 0:
+            balance_inicial = balance_actual
             
-            # Proyecciones con interés compuesto
-            proy_30d = balance_actual * (factor_diario ** 30)
-            proy_90d = balance_actual * (factor_diario ** 90)
-            proy_365d = balance_actual * (factor_diario ** 365)
-            
-            # ROI anualizado compuesto
-            roi_anual = ((factor_diario ** 365) - 1) * 100
-        else:
-            tasa_diaria_pct = 0
-            proy_30d = proy_90d = proy_365d = balance_actual
-            roi_anual = 0
+        roi_semanal = ((balance_actual - balance_inicial) / balance_inicial) * 100 if balance_inicial > 0 else 0
         
-        # ═══════════════════════════════════════════════════════════════════
-        # CONSTRUIR MENSAJE DE TELEGRAM
-        # ═══════════════════════════════════════════════════════════════════
-        mensaje = f"""📊 *RESUMEN SEMANAL BINANCE V5.2*
-📅 Fecha: {fecha_actual}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-📈 *RENDIMIENTO TOTAL DEL PROYECTO*
-━━━━━━━━━━━━━━━━━━━━━━━
-💰 *Balance Inicial:* `${BALANCE_INICIAL_PROYECTO:.2f}`
-💵 *Balance Actual:* `${balance_actual:.2f}`
-{emoji_total} *Ganancia Total:* `${ganancia_total:.2f}`
-📊 *ROI Total:* `{roi_total:.2f}%`
-📆 *Días operando:* `{dias_operando}`
-💹 *Tasa diaria compuesta:* `{tasa_diaria_pct:+.3f}%`
-
-━━━━━━━━━━━━━━━━━━━━━━━
-🔮 *PROYECCIÓN INTERÉS COMPUESTO*
-━━━━━━━━━━━━━━━━━━━━━━━
-📅 *30 días:* `${proy_30d:,.2f}`
-📅 *90 días:* `${proy_90d:,.2f}`
-📅 *1 año:* `${proy_365d:,.2f}`
-📊 *ROI anualizado:* `{roi_anual:+.1f}%`
-
-━━━━━━━━━━━━━━━━━━━━━━━
-📋 *ESTA SEMANA*
-━━━━━━━━━━━━━━━━━━━━━━━
-✅ *Trades Ganados:* `{stats_semanales['ganados']}`
-❌ *Trades Perdidos:* `{stats_semanales['perdidos']}`
-💰 *Ganancias:* `+${stats_semanales['monto_ganado']:.2f}`
-💸 *Pérdidas:* `-${stats_semanales['monto_perdido']:.2f}`
-🛡️ *Cierres Guardian:* `{stats_semanales['cierres_guardian']}`
-{emoji_semana} *Resultado Semana:* `${resultado_semana:.2f}`
-📈 *ROI Semanal:* `{roi_semanal:.2f}%`
-
-━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Bot Binance V5.3 Activo ✅"""
+        trades_ganados = metricas_semanales.get('total_trades', 0) * (metricas_semanales.get('win_rate', 0) / 100.0)
+        trades_ganados = int(round(trades_ganados))
+        trades_perdidos = metricas_semanales.get('total_trades', 0) - trades_ganados
         
-        # V5.3: Añadir métricas de riesgo al resumen
-        try:
-            metricas_texto = generar_resumen_metricas()
-            mensaje += f"\n\n{metricas_texto}"
-        except Exception:
-            pass
+        win_rate = metricas_semanales.get('win_rate', 0.0)
+        profit_factor = metricas_semanales.get('profit_factor', 0.0)
         
-        # Enviar mensaje por Telegram
+        # Formatear ROI con el signo adecuado
+        roi_str = f"+{roi_semanal:.2f}%" if roi_semanal >= 0 else f"{roi_semanal:.2f}%"
+
+        mensaje = f"""📊 RESUMEN SEMANAL V5.6 📊
+🗓️ Viernes 18:00 (Guatemala)
+
+💰 Balance Inicial: ${balance_inicial:,.2f}
+💸 Balance Actual: ${balance_actual:,.2f}
+📈 ROI Semanal: {roi_str}
+
+✅ Operaciones Ganadas: {trades_ganados}
+❌ Operaciones Perdidas: {trades_perdidos}
+🎯 Win Rate: {win_rate:.1f}%
+⚖️ Profit Factor: {profit_factor:.2f}
+
+🤖 Estado del Bot: ÓPTIMO"""
+        
         enviar_telegram(mensaje)
-        log(f"📊 Resumen semanal enviado: {fecha_actual}")
+        log(f"📊 Resumen semanal (WOW Summary) enviado correctamente.")
         
         # ═══════════════════════════════════════════════════════════════════
         # RESETEAR ESTADÍSTICAS PARA LA NUEVA SEMANA
         # ═══════════════════════════════════════════════════════════════════
-        stats_semanales["balance_inicio_semana"] = balance_actual  # Guardar balance actual como inicio
+        stats_semanales["balance_inicio_semana"] = balance_actual
         stats_semanales["ganados"] = 0
         stats_semanales["perdidos"] = 0
         stats_semanales["monto_ganado"] = 0
