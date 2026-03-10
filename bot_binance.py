@@ -138,18 +138,16 @@ LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
 # ═══════════════════════════════════════════════════════════════════════════════
-TEMPORALIDADES = ['1h', '4h']  # V5.0: Solo 1h y 4h (15m/30m demasiado ruido para x3)
+TEMPORALIDADES = ['1h']  # V5.7: Solo 1h para Day Trading institucional
 
-# V5.0: TP/SL estilo enero - SL amplio da espacio, TP alcanzable
+# V5.7: TP/SL Day Trading Institucional ($60 TP / $30 SL con 3x)
 TP_SL_CONFIG = {
-    "1h":  {"tp": 0.035, "sl": 0.025},    # +3.5%, -2.5% (R:R 1.4:1) - SL amplio como enero
-    "4h":  {"tp": 0.06, "sl": 0.035},     # +6%, -3.5% (R:R 1.71:1)
+    "1h":  {"tp": 0.024, "sl": 0.012},    # +2.4%, -1.2% (R:R 2:1)
 }
 
-# V5.4: Modo rango para capturar lateralidad sin forzar lógica de tendencia
+# V5.7: Modo rango (Ajustado)
 TP_SL_RANGO_CONFIG = {
     "1h":  {"tp": 0.02, "sl": 0.015},     # +2.0%, -1.5%
-    "4h":  {"tp": 0.03, "sl": 0.02},      # +3.0%, -2.0%
 }
 FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
 
@@ -1116,13 +1114,12 @@ def calcular_ev_neto(confianza, tp_pct, sl_pct, modo_mercado="TREND"):
     return ev_neto, p_win
 
 
-def generar_senal_fallback(ind_1h, ind_4h, posicion_rango, fg_valor):
+def generar_senal_fallback(ind_1h, posicion_rango, fg_valor):
     """Genera señal técnica de respaldo cuando la IA responde WAIT."""
     if not ind_1h:
         return None, 0.0, None, "Sin datos de indicadores"
 
     t1 = (ind_1h.get('tendencia_ema', '') or '').upper()
-    t4 = (ind_4h.get('tendencia_ema', '') or '').upper() if ind_4h else ''
     rsi = float(ind_1h.get('rsi', 50))
     macd_hist = float((ind_1h.get('macd') or {}).get('histograma', 0))
     atr_pct = float(ind_1h.get('atr_percent', 0))
@@ -1133,18 +1130,18 @@ def generar_senal_fallback(ind_1h, ind_4h, posicion_rango, fg_valor):
         return None, 0.0, None, "Volatilidad insuficiente para fallback"
 
     # Continuación bajista
-    if 'BAJISTA' in t1 and (not t4 or 'BAJISTA' in t4):
+    if 'BAJISTA' in t1:
         if 38 <= rsi <= 62 and posicion_rango >= 55 and macd_hist < 0:
-            conf = 0.72 + (0.03 if 'BAJISTA' in t4 else 0) + (0.02 if vol_rel >= 1.10 else 0)
+            conf = 0.72 + (0.02 if vol_rel >= 1.10 else 0)
             if fg_valor < 25:
                 conf -= 0.03
             conf = max(0.70, min(0.85, conf))
             return "SHORT", conf, "1h", "Fallback técnico: continuación bajista (EMA+MACD+rango)"
 
     # Continuación alcista
-    if 'ALCISTA' in t1 and (not t4 or 'ALCISTA' in t4):
+    if 'ALCISTA' in t1:
         if 38 <= rsi <= 62 and posicion_rango <= 45 and macd_hist > 0:
-            conf = 0.72 + (0.03 if 'ALCISTA' in t4 else 0) + (0.02 if vol_rel >= 1.10 else 0)
+            conf = 0.72 + (0.02 if vol_rel >= 1.10 else 0)
             if fg_valor > 75:
                 conf -= 0.03
             conf = max(0.70, min(0.85, conf))
@@ -1530,9 +1527,9 @@ def guardian_posiciones(client):
                 pnl_porcentaje = 0
             
             # ═══════════════════════════════════════════════════════════════════
-            # MOTOR DE SCALPING (COBRAR GANANCIAS RÁPIDAS $5.00)
+            # MOTOR DE SCALPING RÍGIDO (COBRO SEGURO $60.00)
             # ═══════════════════════════════════════════════════════════════════
-            SCALPING_TARGET = 5.00
+            SCALPING_TARGET = 60.00
             if unrealized_pnl >= SCALPING_TARGET:
                 side = 'SELL' if cantidad > 0 else 'BUY'
                 
@@ -2274,7 +2271,7 @@ def enviar_resumen_diario(client):
 
 def enviar_resumen_semanal(client):
     """
-    Genera y envía un resumen semanal por Telegram (WOW Summary V5.6).
+    Genera y envía un resumen semanal por Telegram (WOW Summary V5.7).
     Se envía cada viernes a las 18:00 (Guatemala).
     """
     global stats_semanales
@@ -2302,7 +2299,7 @@ def enviar_resumen_semanal(client):
         # Formatear ROI con el signo adecuado
         roi_str = f"+{roi_semanal:.2f}%" if roi_semanal >= 0 else f"{roi_semanal:.2f}%"
 
-        mensaje = f"""📊 RESUMEN SEMANAL V5.6 📊
+        mensaje = f"""📊 RESUMEN SEMANAL V5.7 📊
 🗓️ Viernes 18:00 (Guatemala)
 
 💰 Balance Inicial: ${balance_inicial:,.2f}
@@ -2380,26 +2377,19 @@ def ejecutar_trading(client, gemini_client):
                 
             try:
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.3: MULTI-TIMEFRAME — Descargar velas 1h Y 4h
+                # V5.7: DAY TRADING 1H — Descargar velas 1h (Eliminado 4h)
                 # ═══════════════════════════════════════════════════════════════════
                 velas_1h = obtener_velas(client, symbol, '1h', VELAS_CANTIDAD)
-                if not velas_1h or len(velas_1h) < 50:
+                if not velas_1h or len(velas_1h) < 200:
                     continue
                 
-                velas_4h = obtener_velas(client, symbol, '4h', 100)
-                
-                log(f"🧠 Analizando: {symbol} (1h: {len(velas_1h)} velas | 4h: {len(velas_4h) if velas_4h else 0} velas)")
+                log(f"🧠 Analizando: {symbol} (1h: {len(velas_1h)} velas)")
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.3: CALCULAR 14 INDICADORES para AMBAS temporalidades
+                # V5.7: CALCULAR INDICADORES 1h
                 # ═══════════════════════════════════════════════════════════════════
                 klines_1h = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas_1h]
                 ind_1h = analizar_indicadores_completo(klines_1h)
-                
-                ind_4h = None
-                if velas_4h and len(velas_4h) >= 50:
-                    klines_4h = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas_4h]
-                    ind_4h = analizar_indicadores_completo(klines_4h)
                 
                 if not ind_1h:
                     log(f"   ⚠️ No se pudieron calcular indicadores para {symbol}")
@@ -2440,35 +2430,14 @@ def ejecutar_trading(client, gemini_client):
                 velas_csv = "\n".join(velas_csv_lines)
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.3: PROMPT ENRIQUECIDO — 14 indicadores × 2 temporalidades
-                #        + 200 velas crudas para detección de patrones
+                # V5.7: PROMPT ENRIQUECIDO DAY TRADER INSTITUCIONAL
                 # ═══════════════════════════════════════════════════════════════════
                 
-                # Bloque 4h (si disponible)
-                bloque_4h = ""
-                if ind_4h:
-                    precios_4h = [v['close'] for v in velas_4h[-50:]]
-                    vol_4h = ((max(precios_4h) - min(precios_4h)) / precio_actual) * 100 if precios_4h else 0
-                    rango_4h = ((precio_actual - min(precios_4h)) / (max(precios_4h) - min(precios_4h)) * 100) if precios_4h and max(precios_4h) != min(precios_4h) else 50
-                    bloque_4h = f"""
-══════════════════════════════════
-TEMPORALIDAD 4H (100 velas = ~17 días)
-══════════════════════════════════
-- RSI(14): {ind_4h['rsi']:.1f}
-- Tendencia EMA: {ind_4h['tendencia_ema']} (EMA20: ${ind_4h['ema20']}, EMA50: ${ind_4h['ema50']})
-- MACD: {ind_4h['macd']['macd']:.6f} | Signal: {ind_4h['macd']['signal']:.6f} | Histograma: {ind_4h['macd']['histograma']:.6f}
-- Bollinger: Sup ${ind_4h['bollinger']['superior']} | Inf ${ind_4h['bollinger']['inferior']} | Pos: {ind_4h['bollinger']['posicion']}%
-- ATR(14): ${ind_4h['atr']:.6f} ({ind_4h['atr_percent']:.2f}%)
-- Volumen relativo: {ind_4h['volumen_relativo']}x
-- Soporte: ${ind_4h['soporte']} ({ind_4h['dist_soporte']:.2f}%) | Resistencia: ${ind_4h['resistencia']} ({ind_4h['dist_resistencia']:.2f}%)
-- Volatilidad: {vol_4h:.2f}% | Pos en rango: {rango_4h:.1f}%"""
-                
-                prompt = f"""Eres un trader profesional de criptomonedas con análisis técnico y fundamental.
-Analiza primero los INDICADORES y usa las velas crudas solo para confirmar patrones.
+                prompt = f"""Eres un Day Trader institucional. Tu objetivo exclusivo es identificar movimientos intradiarios limpios de entre 1.5% y 2.5% en la temporalidad de 1H. Ignora el ruido macroeconómico de largo plazo. Evalúa el Valor Esperado (EV) asumiendo un Take Profit de 2.4% y un Stop Loss de 1.2%.
 
 MERCADO GLOBAL:
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-25: Extreme Fear (sesgo LONG; los SHORTs necesitan confirmación bajista clara, pero no están prohibidos)
+- 0-25: Extreme Fear (sesgo LONG; los SHORTs necesitan confirmación bajista clara)
 - 26-45: Fear (favorecer LONGs en soporte)
 - 46-55: Neutral
 - 56-75: Greed (favorecer SHORTs tácticos)
@@ -2482,14 +2451,13 @@ TEMPORALIDAD 1H (200 velas = ~8 días)
 ══════════════════════════════════
 - Precio actual: ${precio_actual}
 - RSI(14): {ind_1h['rsi']:.1f}
-- Tendencia EMA: {ind_1h['tendencia_ema']} (EMA20: ${ind_1h['ema20']}, EMA50: ${ind_1h['ema50']})
+- Tendencia EMA: {ind_1h['tendencia_ema']} (EMA20: ${ind_1h['ema20']}, EMA50: ${ind_1h['ema50']}, EMA200: ${ind_1h.get('ema200', 'N/A')})
 - MACD: {ind_1h['macd']['macd']:.6f} | Signal: {ind_1h['macd']['signal']:.6f} | Histograma: {ind_1h['macd']['histograma']:.6f}
 - Bollinger: Sup ${ind_1h['bollinger']['superior']} | Med ${ind_1h['bollinger']['media']} | Inf ${ind_1h['bollinger']['inferior']} | Pos: {ind_1h['bollinger']['posicion']}%
 - ATR(14): ${ind_1h['atr']:.6f} ({ind_1h['atr_percent']:.2f}%)
 - Volumen relativo: {ind_1h['volumen_relativo']}x
 - Soporte: ${ind_1h['soporte']} ({ind_1h['dist_soporte']:.2f}%) | Resistencia: ${ind_1h['resistencia']} ({ind_1h['dist_resistencia']:.2f}%)
 - Volatilidad: {volatilidad:.2f}% | Pos en rango: {posicion_rango:.1f}%
-{bloque_4h}
 
 ══════════════════════════════════
 LAS 120 VELAS 1H MÁS RECIENTES (open,high,low,close,volume)
@@ -2500,17 +2468,15 @@ Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
 
 REGLAS OPERATIVAS:
 1. Confianza objetivo para ejecutar: normalmente >= 60% (no seas más alto sin motivo).
-2. Prioriza operar a favor de la tendencia EMA dominante.
+2. Prioriza operar a favor de la tendencia EMA dominante intradiaria.
 3. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra clara (RSI alto, precio en parte alta del rango) + patrón de reversión en velas.
 4. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay sobreventa clara (RSI bajo, precio en parte baja del rango) + patrón de rebote en velas.
-5. Fear < 25: favorece LONG; acepta SHORT solo si 1h y 4h son bajistas y MACD/volumen apoyan la caída.
-6. Greed > 75: favorece SHORT; acepta LONG solo si 1h y 4h son alcistas y MACD/volumen apoyan la subida.
+5. Fear < 25: favorece LONG; acepta SHORT solo si el momentum 1H es bajista y MACD/volumen apoyan la caída.
+6. Greed > 75: favorece SHORT; acepta LONG solo si el momentum 1H es alcista y MACD/volumen apoyan la subida.
 7. Si precio en 20% inferior del rango y RSI < 40: favorece LONG.
 8. Si precio en 80% superior del rango y RSI > 60: favorece SHORT.
 9. Confirma siempre que puedas con MACD (histograma) y volumen relativo.
-10. Si 1h y 4h coinciden en dirección, aumenta convicción y confianza.
-11. Usa WAIT solo cuando TODO esté muy neutro: RSI entre 45-55, tendencia lateral en 1h y 4h, volatilidad y volumen bajos y sin patrones claros en velas.
-12. Si hay conflicto leve entre 1h y 4h, NO te bloquees: elige la dirección con mayor probabilidad según indicadores y contexto de Fear & Greed.
+10. Usa WAIT si no hay un setup claro para ganar 2.4% rápido.
 
 Responde SOLO con este JSON, sin explicación adicional:
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "1h", "RAZON": "explicacion breve"}}"""
@@ -2568,7 +2534,7 @@ Responde SOLO con este JSON, sin explicación adicional:
                 # V5.5: Fallback técnico cuando IA responde WAIT
                 if accion == "WAIT":
                     accion_fb, conf_fb, temp_fb, razon_fb = generar_senal_fallback(
-                        ind_1h, ind_4h, posicion_rango, fg_valor
+                        ind_1h, posicion_rango, fg_valor
                     )
                     if accion_fb:
                         accion = accion_fb
@@ -2618,18 +2584,19 @@ Responde SOLO con este JSON, sin explicación adicional:
                     score_ajuste += 0.05
                     reglas_aplicadas.append("Dirección alineada con tendencia")
 
-                # Confirmación/contradicción 4h
-                if ind_4h and accion in ["LONG", "SHORT"]:
-                    tend_4h = (ind_4h.get('tendencia_ema', '') or '').upper()
-                    if accion == "LONG" and 'BAJISTA' in tend_4h:
-                        score_ajuste -= 0.15
-                        reglas_aplicadas.append("4h contradice LONG (-15%)")
-                    elif accion == "SHORT" and 'ALCISTA' in tend_4h:
-                        score_ajuste -= 0.15
-                        reglas_aplicadas.append("4h contradice SHORT (-15%)")
-                    elif (accion == "LONG" and 'ALCISTA' in tend_4h) or (accion == "SHORT" and 'BAJISTA' in tend_4h):
-                        score_ajuste += 0.05
-                        reglas_aplicadas.append("1h y 4h alineadas (+5%)")
+                # ═══════════════════════════════════════════════════════════════════
+                # V5.7: GPS EMA 200 - FILTRO ABSOLUTO DE TENDENCIA
+                # ═══════════════════════════════════════════════════════════════════
+                ema_200_1h = ind_1h.get('ema200')
+                if ema_200_1h and accion in ["LONG", "SHORT"]:
+                    if accion == "LONG" and precio_actual < ema_200_1h:
+                        log(f"   ⛔ GPS EMA200 BLOQUEA LONG (Precio ${precio_actual} < EMA200 ${ema_200_1h})")
+                        accion = "WAIT"
+                        razon = "Bloqueado por filtro EMA 200"
+                    elif accion == "SHORT" and precio_actual > ema_200_1h:
+                        log(f"   ⛔ GPS EMA200 BLOQUEA SHORT (Precio ${precio_actual} > EMA200 ${ema_200_1h})")
+                        accion = "WAIT"
+                        razon = "Bloqueado por filtro EMA 200"
 
                 if accion in ["LONG", "SHORT"]:
                     confianza = max(0.0, min(0.99, confianza + score_ajuste))

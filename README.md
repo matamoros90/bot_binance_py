@@ -1,4 +1,4 @@
-# 🤖 Bot Binance Futures V5.6 - Multi-Timeframe + SQLite + Riesgo Cuantitativo
+# 🤖 Bot Binance Futures V5.7 - Day Trader Institucional + SQLite + Riesgo Cuantitativo
 
 ## 📋 Descripción
 
@@ -6,18 +6,18 @@ Bot de trading automatizado para Binance Futures que usa **Gemini 2.0 Flash** pa
 
 Opera 24/7 con:
 
-- análisis multi-timeframe (1h + 4h),
-- protección de riesgo (Guardian, drawdown diario, SL/TP),
-- persistencia SQLite,
-- métricas de rendimiento para evaluar viabilidad.
+- Meta de Capital Asimétrico: Orientado a ganar entre $30 y $60 USDT diarios con un R:R rígido.
+- Protección de riesgo cuantitativo (Guardian iterativo, drawdown diario, SL/TP estricto).
+- Persistencia inteligente en SQLite para auditoría.
+- Optimización de Payload: Envío exclusivo de la temporalidad 1H a la IA para reducir masivamente el consumo de tokens y maximizar el enfoque intradiario.
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 26/02/2026)
+## 🚀 Estado del Proyecto (Última actualización: 09/03/2026)
 
 | Aspecto         | Estado                                 |
 | --------------- | -------------------------------------- |
-| **Versión**     | V5.6                                   |
+| **Versión**     | V5.7 (Day Trader)                      |
 | **Plataforma**  | Koyeb (Deploy automático desde GitHub) |
 | **Modo**        | TESTNET (Pruebas)                      |
 | **Estado**      | 🟢 Operativo                           |
@@ -158,7 +158,7 @@ Con esto se evita quedar expuesto sin protección real.
 
 ## ✅ V5.3 (22/02/2026) — Arquitectura Completa
 
-1. Análisis dual 1h + 4h con 14 indicadores.
+1. Análisis enfocado en 1H con 14 indicadores.
 2. 200 velas crudas para detección de patrones por IA.
 3. Pre-filtro para reducir llamadas a Gemini.
 4. Persistencia SQLite de trades, decisiones y balances.
@@ -197,9 +197,9 @@ MAX_PERDIDA_PERMITIDA = -0.07
 MAX_DIAS_POSICION = 5
 TP_DINAMICO_DIAS = 3
 
-# V5.4 - Régimen + EV
-TP_SL_CONFIG = {"1h": {"tp": 0.035, "sl": 0.025}, "4h": {"tp": 0.06, "sl": 0.035}}
-TP_SL_RANGO_CONFIG = {"1h": {"tp": 0.02, "sl": 0.015}, "4h": {"tp": 0.03, "sl": 0.02}}
+# V5.7 - Régimen + EV
+TP_SL_CONFIG = {"1h": {"tp": 0.024, "sl": 0.012}}
+TP_SL_RANGO_CONFIG = {"1h": {"tp": 0.02, "sl": 0.015}}
 FACTOR_MONTO_RANGO = 0.70
 FEE_ROUNDTRIP_EST = 0.0012
 SLIPPAGE_EST = 0.0006
@@ -208,29 +208,29 @@ EV_MINIMO = 0.0                  # EV solo informativo (no filtro duro)
 
 ## 📊 TP/SL por Régimen
 
-| Régimen | 1h TP/SL      | 4h TP/SL      | Uso                           |
-| ------- | ------------- | ------------- | ----------------------------- |
-| TREND   | +3.5% / -2.5% | +6.0% / -3.5% | Continuación de tendencia     |
-| RANGE   | +2.0% / -1.5% | +3.0% / -2.0% | Mercados laterales/congestión |
+| Régimen | 1h TP/SL      | Uso                           |
+| ------- | ------------- | ----------------------------- |
+| TREND   | +2.4% / -1.2% | Day Trading Institucional     |
+| RANGE   | +2.0% / -1.5% | Mercados laterales/congestión |
 
 ---
 
-## 🧠 Flujo de Operación V5.5
+## 🧠 Flujo de Operación V5.7
 
 ```text
 1. Obtener Fear & Greed Index
 2. Analizar top 15 pares por volumen
-3. Descargar velas 1h (200) + 4h (100)
+3. Descargar velas 1h (200)
 4. Calcular indicadores técnicos completos
 5. Pre-filtro de mercado sin señal
 6. Gemini propone: LONG / SHORT / WAIT
-7. Validación post-IA por score (tendencia, fear, confirmación 4h)
+7. Validación GPS: Bloqueo absoluto usando EMA 200 en 1H como filtro de tendencia.
 8. Si IA devuelve WAIT: evaluar fallback técnico anti-bloqueo
 9. Clasificar régimen: TREND o RANGE
-10. Calcular EV neto y filtrar operaciones con expectativa baja
+10. Calcular EV neto evaluando riesgo $30 vs beneficio $60
 11. Ejecutar orden con TP/SL
 12. Si SL falla: cierre inmediato de seguridad
-13. Monitoreo continuo + guardian + reportes diarios/semanales
+13. Monitoreo continuo + Guardián (Target de Scalping Rígido $60) + reportes
 ```
 
 ---
