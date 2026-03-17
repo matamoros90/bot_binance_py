@@ -1982,8 +1982,8 @@ def ejecutar_trading(client, gemini_client):
                 rsi = ind_actual['rsi']
                 tendencia = (ind_actual.get('tendencia_ema', '') or '').upper()
                 
-                # Skip si RSI neutral + tendencia lateral + rango medio
-                if (40 < rsi < 60 and 'LATERAL' in tendencia and 35 < posicion_rango < 65):
+                # Skip si RSI estrictamente neutral + tendencia lateral + rango medio apretado
+                if (45 < rsi < 55 and 'LATERAL' in tendencia and 45 < posicion_rango < 55):
                     if LOG_DETALLADO:
                         log(f"   ⏭️ {symbol}: Pre-filtro skip (RSI {rsi:.0f}, {tendencia}, rango {posicion_rango:.0f}%)")
                     continue
@@ -2107,8 +2107,8 @@ Responde SOLO con este JSON, sin explicación adicional:
                 if temporalidad not in TEMPORALIDADES:
                     temporalidad = temp_actual
 
-                # V5.5: Fallback técnico cuando IA responde WAIT
-                if accion == "WAIT":
+                # V5.5: Fallback técnico cuando IA se fuerza erróneamente en esperar o falla
+                if accion not in ["LONG", "SHORT"]:
                     accion_fb, conf_fb, temp_fb, razon_fb = generar_senal_fallback(
                         ind_actual, posicion_rango, fg_valor
                     )

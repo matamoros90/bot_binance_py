@@ -14,14 +14,14 @@ Opera 24/7 con:
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 16/03/2026)
+## 🚀 Estado del Proyecto (Última actualización: 17/03/2026)
 
 | Aspecto         | Estado                                 |
 | --------------- | -------------------------------------- |
-| **Versión**     | V5.9 (High Frequency Scalping)         |
+| **Versión**     | V5.9.1 (Forced AI Scalping)            |
 | **Plataforma**  | Koyeb (Deploy automático desde GitHub) |
 | **Modo**        | TESTNET / PRODUCCIÓN                   |
-| **Estado**      | 🟢 Operativo y Escalado                 |
+| **Estado**      | 🟢 Operativo y Agresivo                  |
 
 ---
 
@@ -88,12 +88,26 @@ TP_SL_RANGO_CONFIG = {"15m": {"tp": 0.010, "sl": 0.006}}
 2. Scrapear World-Monitor (Sentimiento Institucional de Hoy)
 3. Analizar top 30 pares por volumen en velas de 15 minutos (200 velas).
 4. Calcular indicadores técnicos (RSI, Bollinger, MACD, etc) en milisegundos.
-5. Gemini dictamina LONG / SHORT o WAIT integrando el contexto mundial.
+5. Gemini dictamina **obligatoriamente** LONG o SHORT integrando el contexto mundial (y su probabilidad matemática de acierto).
 6. Si IA detecta ventaja, el Criterio de Kelly dictamina cuántos USD se van a arriesgar.
 7. Se establece Inserción (Limit o Market) con TP/SL agresivo de 1.5% - 0.8%.
 8. Si hay ganancias, el Trailing SL sigue el precio para maximizarlo.
 9. Se repite en bucle 24/7 en las 10 posiciones.
 ```
+
+---
+
+## 🛠️ Troubleshooting y Bugs Resueltos (V5.9)
+
+Durante la transición al modelo de Scalping de Alta Frecuencia (15m), se documentan los siguientes problemas críticos resueltos para referencia futura:
+
+1. **Bug de Temporalidad Hardcodeada (`ind_1h`)**: 
+   - **Problema**: El código arrastraba referencias absolutas a `1h` (ej. `ind_1h`, `velas_1h`) en lugar de usar la lista dinámica `TEMPORALIDADES[0]`. Esto provocaba que el bot intentara leer 200 velas de 1 hora mientras las variables internas procesaban los datos de 15 minutos, generando Crash de tipo `name 'ind_1h' is not defined`.
+   - **Solución**: Se eliminó todo hardcodeo de `1h`. Ahora toda extracción de variables e indicadores depende de `temp_actual = TEMPORALIDADES[0]` y el sufijo general `ind_actual`.
+
+2. **Bloqueo Constante de la IA (`WAIT` Inexplicable a 70%)**:
+   - **Problema**: Gemini estaba programado en el Prompt con la regla *"Asigna confianzas entre el 70% y el 85%"*. Al analizar 15m (un gráfico ruidoso por naturaleza), la IA tenía miedo de emitir señales y decidía `WAIT` constantemente deteniendo todas las órdenes.
+   - **Solución**: En la v5.9.1 se ha prohibido explícitamente y eliminado la capacidad de emitir la señal `WAIT` en el prompt a Gemini. Al remover esto y flexibilizar los pre-filtros de salto térmico, el modelo ahora se ve obligado matemáticamente a decidir probabilísticamente si es mejor abrir un `LONG` o un `SHORT` según el momentum, y el threshold de confianza se ha mantenido lo suficientemente bajo como para atrapar esas decisiones intradiarias de forma ágil y ejecutarlas.
 
 ---
 
