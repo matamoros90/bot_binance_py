@@ -2162,7 +2162,7 @@ Responde SOLO con este JSON, sin explicación adicional:
                 # ═══════════════════════════════════════════════════════════════════
                 # V5.7: GPS EMA 200 - FILTRO ABSOLUTO DE TENDENCIA
                 # ═══════════════════════════════════════════════════════════════════
-                ema_200_1h = ind_1h.get('ema200')
+                ema_200_1h = ind_actual.get('ema200')
                 if ema_200_1h and accion in ["LONG", "SHORT"]:
                     if accion == "LONG" and precio_actual < ema_200_1h:
                         log(f"   ⛔ GPS EMA200 BLOQUEA LONG (Precio ${precio_actual} < EMA200 ${ema_200_1h})")
