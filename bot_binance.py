@@ -2042,15 +2042,17 @@ Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
 {velas_csv}
 
 REGLAS OPERATIVAS SCALPING EXTREMO (15m):
-1. Tu misión es operar Frecuentemente. Asigna confianzas entre 70% y 85% a cualquier setup intradiario que ofrezca un rápido 1.5%.
-2. NO seas conservador. Un Scalper toma riesgos a favor del momentum más cercano.
-3. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra rápida (RSI > 70).
-4. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay rebote rápido en soporte o RSI < 30.
-5. World Monitor y Fear & Greed: Úsalos como apoyo direccional, pero no dejes que el "Fear" macro te asuste de tomar un LONG si el gráfico de 15m tiene buen momentum.
-6. Si precio en 20% inferior del rango y RSI < 40: Favorece LONG fuerte.
-7. Si precio en 80% superior del rango y RSI > 60: Favorece SHORT fuerte.
-8. Confirma con Volumen Relativo para asegurar movimiento.
-9. Prohibido responder "WAIT" con confianzas absurdas como 50%. Tienes que tomar decisiones: si hay oportunidad mínima, entra LONG o SHORT. Solo usa WAIT en consolidaciones muertas (volumen nulo o patrón inexistente).
+1. Tu misión es operar Frecuentemente. Identifica cualquier setup intradiario que ofrezca un rápido 1.5%.
+2. Escala de CONFIANZA obligatoria:
+   - Si respondes "WAIT", la CONFIANZA debe ser 0%.
+   - Si respondes "LONG" o "SHORT", la CONFIANZA debe ser realista según el setup técnico (ej. 60% a 95%).
+3. NO seas conservador. Un Scalper toma riesgos a favor del momentum más cercano.
+4. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra rápida (RSI > 70).
+5. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay rebote rápido en soporte o RSI < 30.
+6. World Monitor y Fear & Greed: Úsalos como apoyo direccional, pero no dejes que el "Fear" macro te asuste de tomar un LONG si el gráfico de 15m tiene buen momentum.
+7. Si precio en 20% inferior del rango y RSI < 40: Favorece LONG fuerte.
+8. Si precio en 80% superior del rango y RSI > 60: Favorece SHORT fuerte.
+9. Tienes que tomar decisiones: si hay oportunidad mínima, entra LONG o SHORT. Solo usa WAIT en consolidaciones muertas (volumen nulo o patrón inexistente).
 
 Responde SOLO con este JSON, sin explicación adicional:
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "{temp_actual}", "RAZON": "explicacion breve"}}"""
