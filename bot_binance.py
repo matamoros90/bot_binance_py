@@ -385,6 +385,26 @@ def en_pausa_por_noticias():
     """Activa una pausa temporal si se detecta evento noticioso de alto impacto."""
     global pausa_noticias_hasta, ultimo_check_noticias
 
+    if not NOTICIAS_PROTECCION_ACTIVA:
+        return False, ""
+
+    ahora = datetime.now()
+    if pausa_noticias_hasta and ahora < pausa_noticias_hasta:
+        mins_restantes = int((pausa_noticias_hasta - ahora).total_seconds() / 60)
+        return True, f"Pausa por noticias activa ({mins_restantes} min restantes)"
+
+    if time.time() - ultimo_check_noticias < NOTICIAS_CHECK_INTERVALO:
+        return False, ""
+
+    ultimo_check_noticias = time.time()
+    detectado, titular = detectar_noticia_alto_impacto()
+    if detectado:
+        pausa_noticias_hasta = ahora + timedelta(minutes=PAUSA_NOTICIAS_MINUTOS)
+        log(f"📰 Noticia de alto impacto detectada. Pausa de trading por {PAUSA_NOTICIAS_MINUTOS} min.")
+        log(f"📰 Titular: {titular}")
+        return True, "Pausa por noticia de alto impacto"
+    return False, ""
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # GESTIÓN DE RIESGO AVANZADA V3.0 - FUNCIONES
 # ═══════════════════════════════════════════════════════════════════════════════
