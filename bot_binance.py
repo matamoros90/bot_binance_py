@@ -2041,17 +2041,16 @@ Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
 ══════════════════════════════════
 {velas_csv}
 
-REGLAS OPERATIVAS:
-1. Confianza objetivo para ejecutar: normalmente >= 60% (no seas más alto sin motivo).
-2. Prioriza operar a favor de la tendencia EMA dominante intradiaria.
-3. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra clara (RSI alto, precio en parte alta del rango) + patrón de reversión en velas.
-4. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay sobreventa clara (RSI bajo, precio en parte baja del rango) + patrón de rebote en velas.
-5. Considera fuertemente el Sentimiento de World Monitor en conjunto con Fear & Greed para predecir movimientos de las instituciones financieras de hoy.
-6. Greed > 75 y/o Sentimiento de World Monitor muy negativo: favorece SHORT; acepta LONG solo si el momentum es muy alcista.
-7. Si precio en 20% inferior del rango y RSI < 40: favorece LONG.
-8. Si precio en 80% superior del rango y RSI > 60: favorece SHORT.
-9. Confirma siempre que puedas con MACD (histograma) y volumen relativo.
-10. Usa WAIT si no hay un setup claro de alta probabilidad.
+REGLAS OPERATIVAS SCALPING EXTREMO (15m):
+1. Tu misión es operar Frecuentemente. Asigna confianzas entre 70% y 85% a cualquier setup intradiario que ofrezca un rápido 1.5%.
+2. NO seas conservador. Un Scalper toma riesgos a favor del momentum más cercano.
+3. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra rápida (RSI > 70).
+4. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay rebote rápido en soporte o RSI < 30.
+5. World Monitor y Fear & Greed: Úsalos como apoyo direccional, pero no dejes que el "Fear" macro te asuste de tomar un LONG si el gráfico de 15m tiene buen momentum.
+6. Si precio en 20% inferior del rango y RSI < 40: Favorece LONG fuerte.
+7. Si precio en 80% superior del rango y RSI > 60: Favorece SHORT fuerte.
+8. Confirma con Volumen Relativo para asegurar movimiento.
+9. Prohibido responder "WAIT" con confianzas absurdas como 50%. Tienes que tomar decisiones: si hay oportunidad mínima, entra LONG o SHORT. Solo usa WAIT en consolidaciones muertas (volumen nulo o patrón inexistente).
 
 Responde SOLO con este JSON, sin explicación adicional:
 {{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "{temp_actual}", "RAZON": "explicacion breve"}}"""
@@ -2131,47 +2130,45 @@ Responde SOLO con este JSON, sin explicación adicional:
                 score_ajuste = 0.0
                 reglas_aplicadas = []
 
-                # Fear extremo: penaliza SHORT, pero no lo bloquea automáticamente en tendencia fuerte
+                # Fear extremo: penaliza SHORT ligero, pero prioriza el scalping rápido
                 if fg_valor < 25 and accion == "SHORT":
                     if modo_mercado == "TREND" and 'BAJISTA' in tendencia_ema and rsi_actual > 35:
-                        score_ajuste -= 0.10
-                        reglas_aplicadas.append("Fear<25 penaliza SHORT en tendencia (-10%)")
+                        score_ajuste -= 0.05
+                        reglas_aplicadas.append("Fear<25 penaliza SHORT (-5%)")
                     else:
-                        score_ajuste -= 0.22
-                        reglas_aplicadas.append("Fear<25 penaliza SHORT sin confirmación fuerte")
+                        score_ajuste -= 0.10
+                        reglas_aplicadas.append("Fear<25 penaliza SHORT sin confirmación (-10%)")
 
-                # Alineación/contradicción con tendencia principal
+                # Alineación/contradicción con tendencia principal de scalping
                 if accion == "LONG" and 'BAJISTA' in tendencia_ema:
                     if modo_mercado == "RANGE" and rsi_actual <= 25 and posicion_rango <= 20:
-                        score_ajuste -= 0.08
-                        reglas_aplicadas.append("LONG contra tendencia permitido en rango (penalizado)")
+                        score_ajuste -= 0.02
+                        reglas_aplicadas.append("LONG contra tendencia en rango")
                     else:
-                        score_ajuste -= 0.30
-                        reglas_aplicadas.append("LONG contra tendencia penalizado fuerte")
+                        score_ajuste -= 0.15
+                        reglas_aplicadas.append("LONG contra tendencia EMA (-15%)")
                 elif accion == "SHORT" and 'ALCISTA' in tendencia_ema:
                     if modo_mercado == "RANGE" and rsi_actual >= 75 and posicion_rango >= 80:
-                        score_ajuste -= 0.08
-                        reglas_aplicadas.append("SHORT contra tendencia permitido en rango (penalizado)")
+                        score_ajuste -= 0.02
+                        reglas_aplicadas.append("SHORT contra tendencia en rango")
                     else:
-                        score_ajuste -= 0.30
-                        reglas_aplicadas.append("SHORT contra tendencia penalizado fuerte")
+                        score_ajuste -= 0.15
+                        reglas_aplicadas.append("SHORT contra tendencia EMA (-15%)")
                 elif accion in ["LONG", "SHORT"]:
-                    score_ajuste += 0.05
-                    reglas_aplicadas.append("Dirección alineada con tendencia")
+                    score_ajuste += 0.10
+                    reglas_aplicadas.append("Dirección alineada con tendencia Scalping (+10%)")
 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.7: GPS EMA 200 - FILTRO ABSOLUTO DE TENDENCIA
+                # V5.9: GPS EMA 200 - RELAJADO PARA SCALPING
                 # ═══════════════════════════════════════════════════════════════════
-                ema_200_1h = ind_actual.get('ema200')
-                if ema_200_1h and accion in ["LONG", "SHORT"]:
-                    if accion == "LONG" and precio_actual < ema_200_1h:
-                        log(f"   ⛔ GPS EMA200 BLOQUEA LONG (Precio ${precio_actual} < EMA200 ${ema_200_1h})")
-                        accion = "WAIT"
-                        razon = "Bloqueado por filtro EMA 200"
-                    elif accion == "SHORT" and precio_actual > ema_200_1h:
-                        log(f"   ⛔ GPS EMA200 BLOQUEA SHORT (Precio ${precio_actual} > EMA200 ${ema_200_1h})")
-                        accion = "WAIT"
-                        razon = "Bloqueado por filtro EMA 200"
+                ema_200_actual = ind_actual.get('ema200')
+                if ema_200_actual and accion in ["LONG", "SHORT"]:
+                    if accion == "LONG" and precio_actual < ema_200_actual:
+                        log(f"   ⚠️ GPS: LONG contra EMA200 (Precio ${precio_actual} < EMA200 ${ema_200_actual}) - Penalización ligera.")
+                        score_ajuste -= 0.05
+                    elif accion == "SHORT" and precio_actual > ema_200_actual:
+                        log(f"   ⚠️ GPS: SHORT contra EMA200 (Precio ${precio_actual} > EMA200 ${ema_200_actual}) - Penalización ligera.")
+                        score_ajuste -= 0.05
 
                 if accion in ["LONG", "SHORT"]:
                     confianza = max(0.0, min(0.99, confianza + score_ajuste))
