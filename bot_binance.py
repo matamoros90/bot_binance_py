@@ -5,7 +5,7 @@
 
 from binance.client import Client
 from binance.enums import *
-import time, os, http.server, socketserver, threading, requests, json, sys
+import time, os, http.server, socketserver, threading, requests, json, sys, re
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from google import genai
@@ -28,8 +28,8 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V5.5"
-CONFIANZA_MINIMA = 0.60   # 60% - Umbral mas simple para generar mas operaciones
+BOT_VERSION = "V5.8"
+CONFIANZA_MINIMA = 0.60   # 60% - Umbral mas bajo para generar mas operaciones. IA menos estricta
 ESCUDO_TRABAJO = 1.00     # 100% del balance disponible como base de calculo de monto
 ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -103,7 +103,7 @@ ATR_SL_MINIMO_PERCENT = 0.015       # No usado si ATR_SL_ACTIVO=False
 #   b = ratio ganancia/pérdida promedio
 # El resultado es el % óptimo del capital a arriesgar
 # Usamos "medio Kelly" (50% del resultado) para ser más conservadores
-KELLY_ACTIVO = False                # V5.0: DESACTIVADO - Kelly con historial negativo causa espiral descendente
+KELLY_ACTIVO = True                 # V5.8: REACTIVADO - Usamos Kelly para gestionar riesgo en lugar del IA Constraint
 KELLY_FRACCION = 0.5                # Usar 50% del Kelly (más conservador)
 KELLY_MINIMO = 0.02                 # Mínimo 2% del capital
 KELLY_MAXIMO = 0.10                 # Máximo 10% del capital
@@ -138,16 +138,16 @@ LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
 # ═══════════════════════════════════════════════════════════════════════════════
-TEMPORALIDADES = ['1h']  # V5.7: Solo 1h para Day Trading institucional
+TEMPORALIDADES = ['15m']  # V5.8: Temporalidad más baja para Scalping/Day Trading Activo
 
-# V5.7: TP/SL Day Trading Institucional ($60 TP / $30 SL con 3x)
+# V5.8: Ajuste de Scalping para temporalidad de 15m
 TP_SL_CONFIG = {
-    "1h":  {"tp": 0.024, "sl": 0.012},    # +2.4%, -1.2% (R:R 2:1)
+    "15m":  {"tp": 0.015, "sl": 0.008},    # +1.5%, -0.8% (R:R ~ 2:1) Adaptado a Scalping más rápido
 }
 
-# V5.7: Modo rango (Ajustado)
+# V5.8: Modo rango (Ajustado a 15m)
 TP_SL_RANGO_CONFIG = {
-    "1h":  {"tp": 0.02, "sl": 0.015},     # +2.0%, -1.5%
+    "15m":  {"tp": 0.010, "sl": 0.006},     # +1.0%, -0.6%
 }
 FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
 
@@ -285,7 +285,7 @@ def obtener_exchange_info(client, ttl=1800, force=False):
     return info
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FEAR & GREED INDEX
+# FEAR & GREED INDEX Y WORLD MONITOR SENTIMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 def obtener_fear_greed():
     """Obtiene el índice Fear & Greed actual (0-100)"""
@@ -297,6 +297,27 @@ def obtener_fear_greed():
         return valor, clasificacion
     except:
         return 50, "Neutral"  # Default si falla
+
+def obtener_sentimiento_world_monitor():
+    """V5.8: Extrae sentimiento general desde world-monitor.com analizando palabras clave"""
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get("https://world-monitor.com/", headers=headers, timeout=10)
+        text = response.text.lower()
+        
+        # Conteo básico de palabras clave
+        c_positivas = len(re.findall(r'\b(bullish|positive|growth|surge|rally|buy)\b', text))
+        c_negativas = len(re.findall(r'\b(bearish|negative|decline|crash|drop|sell|fear)\b', text))
+        
+        if c_positivas > c_negativas * 1.5:
+            return "ALCISTA (Bullish Market Sentiment)"
+        elif c_negativas > c_positivas * 1.5:
+            return "BAJISTA (Bearish Market Sentiment)"
+        else:
+            return "NEUTRAL (Mixed/Unclear Market Sentiment)"
+    except Exception as e:
+        log(f"⚠️ Error obteniendo sentimiento de World Monitor: {e}")
+        return "NEUTRAL (API Error)"
 
 
 def _en_rango_minutos(actual_min, inicio_min, fin_min):
@@ -363,478 +384,6 @@ def detectar_noticia_alto_impacto():
 def en_pausa_por_noticias():
     """Activa una pausa temporal si se detecta evento noticioso de alto impacto."""
     global pausa_noticias_hasta, ultimo_check_noticias
-
-    if not NOTICIAS_PROTECCION_ACTIVA:
-        return False, ""
-
-    ahora = datetime.now()
-    if pausa_noticias_hasta and ahora < pausa_noticias_hasta:
-        mins_restantes = int((pausa_noticias_hasta - ahora).total_seconds() / 60)
-        return True, f"Pausa por noticias activa ({mins_restantes} min restantes)"
-
-    if time.time() - ultimo_check_noticias < NOTICIAS_CHECK_INTERVALO:
-        return False, ""
-
-    ultimo_check_noticias = time.time()
-    detectado, titular = detectar_noticia_alto_impacto()
-    if detectado:
-        pausa_noticias_hasta = ahora + timedelta(minutes=PAUSA_NOTICIAS_MINUTOS)
-        log(f"📰 Noticia de alto impacto detectada. Pausa de trading por {PAUSA_NOTICIAS_MINUTOS} min.")
-        log(f"📰 Titular: {titular}")
-        return True, "Pausa por noticia de alto impacto"
-    return False, ""
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# INDICADORES TÉCNICOS V3.0 - Para mejorar decisiones de IA
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def calcular_rsi(precios_cierre, periodo=14):
-    """
-    Calcula el RSI (Relative Strength Index) de una lista de precios.
-    
-    El RSI mide la velocidad y magnitud de los movimientos de precio recientes
-    para evaluar condiciones de sobrecompra o sobreventa.
-    
-    Parámetros:
-        precios_cierre: Lista de precios de cierre (más reciente al final)
-        periodo: Número de períodos para el cálculo (default 14)
-    
-    Retorna:
-        float: Valor RSI entre 0 y 100
-        - RSI > 70: Sobrecompra (posible venta)
-        - RSI < 30: Sobreventa (posible compra)
-        - RSI 30-70: Zona neutral
-    
-    Fórmula:
-        RSI = 100 - (100 / (1 + RS))
-        RS = Promedio de ganancias / Promedio de pérdidas
-    """
-    if len(precios_cierre) < periodo + 1:
-        return 50  # Valor neutral si no hay suficientes datos
-    
-    # Calcular cambios de precio
-    cambios = []
-    for i in range(1, len(precios_cierre)):
-        cambios.append(precios_cierre[i] - precios_cierre[i-1])
-    
-    # Separar ganancias y pérdidas
-    ganancias = [max(0, c) for c in cambios]
-    perdidas = [abs(min(0, c)) for c in cambios]
-    
-    # Calcular promedios del período
-    avg_ganancia = sum(ganancias[-periodo:]) / periodo
-    avg_perdida = sum(perdidas[-periodo:]) / periodo
-    
-    # Evitar división por cero
-    if avg_perdida == 0:
-        return 100  # Máximo RSI si no hay pérdidas
-    
-    # Calcular RS y RSI
-    rs = avg_ganancia / avg_perdida
-    rsi = 100 - (100 / (1 + rs))
-    
-    return round(rsi, 2)
-
-
-def calcular_ema(precios_cierre, periodo):
-    """
-    Calcula la EMA (Exponential Moving Average) de una lista de precios.
-    
-    La EMA da más peso a los precios recientes, reaccionando más rápido
-    que la SMA (Simple Moving Average) a cambios de precio.
-    
-    Parámetros:
-        precios_cierre: Lista de precios de cierre (más reciente al final)
-        periodo: Número de períodos (20, 50, 200 son comunes)
-    
-    Retorna:
-        float: Valor de la EMA
-    
-    Uso para tendencia:
-        - Precio > EMA: Tendencia alcista
-        - Precio < EMA: Tendencia bajista
-        - EMA corta > EMA larga: Cruce alcista (señal de compra)
-        - EMA corta < EMA larga: Cruce bajista (señal de venta)
-    
-    Fórmula:
-        Multiplicador = 2 / (periodo + 1)
-        EMA = (Precio_actual - EMA_anterior) * Multiplicador + EMA_anterior
-    """
-    if len(precios_cierre) < periodo:
-        return precios_cierre[-1] if precios_cierre else 0
-    
-    # Multiplicador de suavizado
-    multiplicador = 2 / (periodo + 1)
-    
-    # EMA inicial = SMA de los primeros 'periodo' valores
-    ema = sum(precios_cierre[:periodo]) / periodo
-    
-    # Calcular EMA para cada precio subsiguiente
-    for precio in precios_cierre[periodo:]:
-        ema = (precio - ema) * multiplicador + ema
-    
-    return round(ema, 4)
-
-
-def calcular_macd(precios_cierre, rapida=12, lenta=26, signal=9):
-    """
-    Calcula el MACD (Moving Average Convergence Divergence).
-    V5.2: Optimizado a O(n) con EMAs incrementales (antes O(n²)).
-    """
-    if len(precios_cierre) < lenta + signal:
-        return {"macd": 0, "signal": 0, "histograma": 0}
-    
-    # EMA incrementales O(n)
-    mult_r = 2 / (rapida + 1)
-    mult_l = 2 / (lenta + 1)
-    mult_s = 2 / (signal + 1)
-    
-    # Inicializar EMAs con SMA de los primeros N valores
-    ema_r = sum(precios_cierre[:rapida]) / rapida
-    ema_l = sum(precios_cierre[:lenta]) / lenta
-    
-    # Calcular EMA rápida y lenta incrementalmente
-    macd_values = []
-    for i, precio in enumerate(precios_cierre):
-        if i >= rapida:
-            ema_r = (precio - ema_r) * mult_r + ema_r
-        if i >= lenta:
-            ema_l = (precio - ema_l) * mult_l + ema_l
-            macd_values.append(ema_r - ema_l)
-    
-    if not macd_values:
-        return {"macd": 0, "signal": 0, "histograma": 0}
-    
-    macd = macd_values[-1]
-    
-    # Signal line como EMA del MACD
-    if len(macd_values) >= signal:
-        ema_sig = sum(macd_values[:signal]) / signal
-        for val in macd_values[signal:]:
-            ema_sig = (val - ema_sig) * mult_s + ema_sig
-        signal_line = ema_sig
-    else:
-        signal_line = macd
-    
-    histograma = macd - signal_line
-    
-    return {
-        "macd": round(macd, 4),
-        "signal": round(signal_line, 4),
-        "histograma": round(histograma, 4)
-    }
-
-
-def calcular_bollinger(precios_cierre, periodo=20, desviaciones=2):
-    """
-    Calcula las Bandas de Bollinger.
-    
-    Las Bandas de Bollinger miden la volatilidad y proporcionan niveles
-    relativos de precios altos y bajos.
-    
-    Parámetros:
-        precios_cierre: Lista de precios de cierre
-        periodo: Período para SMA (default 20)
-        desviaciones: Número de desviaciones estándar (default 2)
-    
-    Retorna:
-        dict con:
-        - superior: Banda superior (SMA + 2*StdDev)
-        - media: SMA del período
-        - inferior: Banda inferior (SMA - 2*StdDev)
-        - ancho: Ancho de banda (volatilidad)
-        - posicion: % del precio dentro de las bandas (0-100)
-    
-    Uso:
-        - Precio cerca de banda superior: Posible sobrecompra
-        - Precio cerca de banda inferior: Posible sobreventa
-        - Bandas estrechas: Baja volatilidad, posible ruptura próxima
-        - Bandas anchas: Alta volatilidad
-    """
-    if len(precios_cierre) < periodo:
-        precio_actual = precios_cierre[-1] if precios_cierre else 0
-        return {
-            "superior": precio_actual,
-            "media": precio_actual,
-            "inferior": precio_actual,
-            "ancho": 0,
-            "posicion": 50
-        }
-    
-    # Últimos N precios
-    ultimos = precios_cierre[-periodo:]
-    
-    # SMA (Media)
-    sma = sum(ultimos) / periodo
-    
-    # Desviación estándar
-    varianza = sum((p - sma) ** 2 for p in ultimos) / periodo
-    std_dev = varianza ** 0.5
-    
-    # Bandas
-    banda_superior = sma + (desviaciones * std_dev)
-    banda_inferior = sma - (desviaciones * std_dev)
-    
-    # Ancho de banda (% de volatilidad)
-    ancho = ((banda_superior - banda_inferior) / sma) * 100 if sma > 0 else 0
-    
-    # Posición del precio actual dentro de las bandas (0-100%)
-    precio_actual = precios_cierre[-1]
-    rango = banda_superior - banda_inferior
-    if rango > 0:
-        posicion = ((precio_actual - banda_inferior) / rango) * 100
-        posicion = max(0, min(100, posicion))  # Clamp entre 0 y 100
-    else:
-        posicion = 50
-    
-    return {
-        "superior": round(banda_superior, 4),
-        "media": round(sma, 4),
-        "inferior": round(banda_inferior, 4),
-        "ancho": round(ancho, 2),
-        "posicion": round(posicion, 1)
-    }
-
-
-def calcular_atr(precios_high, precios_low, precios_close, periodo=14):
-    """
-    Calcula el ATR (Average True Range).
-    
-    El ATR mide la volatilidad del mercado y es útil para:
-    - Establecer Stop Loss dinámicos (1x-2x ATR)
-    - Determinar tamaño de posición
-    - Identificar cambios en volatilidad
-    
-    Parámetros:
-        precios_high: Lista de precios máximos
-        precios_low: Lista de precios mínimos
-        precios_close: Lista de precios de cierre
-        periodo: Período para el promedio (default 14)
-    
-    Retorna:
-        float: Valor ATR (en unidades de precio)
-    
-    True Range = max(
-        High - Low,
-        abs(High - Close_anterior),
-        abs(Low - Close_anterior)
-    )
-    ATR = Promedio móvil del True Range
-    
-    Uso para Stop Loss:
-        - SL conservador: Precio - (2 * ATR)
-        - SL agresivo: Precio - (1 * ATR)
-    """
-    if len(precios_close) < periodo + 1:
-        # Fallback: usar rango simple
-        if precios_high and precios_low:
-            return precios_high[-1] - precios_low[-1]
-        return 0
-    
-    true_ranges = []
-    
-    for i in range(1, len(precios_close)):
-        high = precios_high[i]
-        low = precios_low[i]
-        close_prev = precios_close[i-1]
-        
-        # True Range es el máximo de estos tres valores
-        tr1 = high - low
-        tr2 = abs(high - close_prev)
-        tr3 = abs(low - close_prev)
-        
-        true_range = max(tr1, tr2, tr3)
-        true_ranges.append(true_range)
-    
-    # ATR = Promedio de los últimos 'periodo' True Ranges
-    if len(true_ranges) >= periodo:
-        atr = sum(true_ranges[-periodo:]) / periodo
-    else:
-        atr = sum(true_ranges) / len(true_ranges) if true_ranges else 0
-    
-    return round(atr, 4)
-
-
-def calcular_volumen_relativo(volumenes, periodo=20):
-    """
-    Calcula el volumen relativo comparado con el promedio.
-    
-    El volumen relativo ayuda a confirmar movimientos de precio:
-    - Alto volumen + movimiento fuerte = movimiento confirmado
-    - Bajo volumen + movimiento fuerte = posible falsa ruptura
-    
-    Parámetros:
-        volumenes: Lista de volúmenes (más reciente al final)
-        periodo: Período para calcular promedio (default 20)
-    
-    Retorna:
-        float: Ratio de volumen (1.0 = promedio, 2.0 = doble del promedio)
-    
-    Interpretación:
-        - > 1.5: Volumen alto (movimiento significativo)
-        - 0.8 - 1.5: Volumen normal
-        - < 0.8: Volumen bajo (posible falta de interés)
-    """
-    if len(volumenes) < periodo:
-        return 1.0  # Volumen promedio por defecto
-    
-    # Promedio de los últimos N períodos
-    promedio = sum(volumenes[-periodo:]) / periodo
-    
-    # Volumen actual
-    volumen_actual = volumenes[-1]
-    
-    # Ratio
-    if promedio > 0:
-        ratio = volumen_actual / promedio
-    else:
-        ratio = 1.0
-    
-    return round(ratio, 2)
-
-
-def detectar_soportes_resistencias(precios_high, precios_low, precios_close, ventana=20):
-    """
-    Detecta niveles de soporte y resistencia básicos.
-    
-    Soportes y resistencias son niveles donde el precio históricamente
-    ha encontrado dificultad para bajar (soporte) o subir (resistencia).
-    
-    Parámetros:
-        precios_high: Lista de precios máximos
-        precios_low: Lista de precios mínimos
-        precios_close: Lista de precios de cierre
-        ventana: Período para buscar máximos/mínimos (default 20)
-    
-    Retorna:
-        dict con:
-        - resistencia: Nivel de resistencia más cercano
-        - soporte: Nivel de soporte más cercano
-        - distancia_resistencia: % de distancia a resistencia
-        - distancia_soporte: % de distancia a soporte
-    
-    Método simplificado:
-        - Resistencia = Máximo de los últimos N períodos
-        - Soporte = Mínimo de los últimos N períodos
-    """
-    if not precios_high or not precios_low or len(precios_close) < ventana:
-        precio = precios_close[-1] if precios_close else 0
-        return {
-            "resistencia": precio,
-            "soporte": precio,
-            "distancia_resistencia": 0,
-            "distancia_soporte": 0
-        }
-    
-    # Resistencia = Máximo reciente
-    resistencia = max(precios_high[-ventana:])
-    
-    # Soporte = Mínimo reciente
-    soporte = min(precios_low[-ventana:])
-    
-    # Precio actual
-    precio_actual = precios_close[-1]
-    
-    # Distancias en porcentaje
-    if precio_actual > 0:
-        dist_resistencia = ((resistencia - precio_actual) / precio_actual) * 100
-        dist_soporte = ((precio_actual - soporte) / precio_actual) * 100
-    else:
-        dist_resistencia = 0
-        dist_soporte = 0
-    
-    return {
-        "resistencia": round(resistencia, 4),
-        "soporte": round(soporte, 4),
-        "distancia_resistencia": round(dist_resistencia, 2),
-        "distancia_soporte": round(dist_soporte, 2)
-    }
-
-
-def obtener_tendencia_ema(precio_actual, ema20, ema50, ema200=None):
-    """
-    Determina la tendencia basada en las EMAs.
-    
-    Parámetros:
-        precio_actual: Precio actual del activo
-        ema20: EMA de 20 períodos
-        ema50: EMA de 50 períodos
-        ema200: EMA de 200 períodos (opcional)
-    
-    Retorna:
-        str: 'ALCISTA_FUERTE', 'ALCISTA', 'BAJISTA', 'BAJISTA_FUERTE', o 'LATERAL'
-    
-    Lógica:
-        - Precio > EMA20 > EMA50 > EMA200 = Alcista fuerte
-        - Precio > EMA20 > EMA50 = Alcista
-        - Precio < EMA20 < EMA50 = Bajista
-        - Precio < EMA20 < EMA50 < EMA200 = Bajista fuerte
-    """
-    if ema200:
-        if precio_actual > ema20 > ema50 > ema200:
-            return "ALCISTA_FUERTE"
-        elif precio_actual < ema20 < ema50 < ema200:
-            return "BAJISTA_FUERTE"
-    
-    if precio_actual > ema20 > ema50:
-        return "ALCISTA"
-    elif precio_actual < ema20 < ema50:
-        return "BAJISTA"
-    else:
-        return "LATERAL"
-
-
-def analizar_indicadores_completo(klines):
-    """
-    Función principal que calcula TODOS los indicadores técnicos a partir de las velas.
-    
-    Parámetros:
-        klines: Lista de velas de Binance (formato [timestamp, open, high, low, close, volume, ...])
-    
-    Retorna:
-        dict con todos los indicadores calculados, listo para pasar a la IA
-    """
-    if not klines or len(klines) < 50:
-        return None
-    
-    # Extraer datos de las velas
-    precios_open = [float(k[1]) for k in klines]
-    precios_high = [float(k[2]) for k in klines]
-    precios_low = [float(k[3]) for k in klines]
-    precios_close = [float(k[4]) for k in klines]
-    volumenes = [float(k[5]) for k in klines]
-    
-    precio_actual = precios_close[-1]
-    
-    # Calcular indicadores
-    rsi = calcular_rsi(precios_close, 14)
-    ema20 = calcular_ema(precios_close, 20)
-    ema50 = calcular_ema(precios_close, 50)
-    ema200 = calcular_ema(precios_close, 200) if len(precios_close) >= 200 else None
-    macd = calcular_macd(precios_close)
-    bollinger = calcular_bollinger(precios_close)
-    atr = calcular_atr(precios_high, precios_low, precios_close)
-    volumen_rel = calcular_volumen_relativo(volumenes)
-    sr = detectar_soportes_resistencias(precios_high, precios_low, precios_close)
-    tendencia = obtener_tendencia_ema(precio_actual, ema20, ema50, ema200)
-    
-    return {
-        "precio_actual": precio_actual,
-        "rsi": rsi,
-        "ema20": ema20,
-        "ema50": ema50,
-        "ema200": ema200,
-        "tendencia_ema": tendencia,
-        "macd": macd,
-        "bollinger": bollinger,
-        "atr": atr,
-        "atr_percent": round((atr / precio_actual) * 100, 2) if precio_actual > 0 else 0,
-        "volumen_relativo": volumen_rel,
-        "soporte": sr["soporte"],
-        "resistencia": sr["resistencia"],
-        "dist_soporte": sr["distancia_soporte"],
-        "dist_resistencia": sr["distancia_resistencia"]
-    }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GESTIÓN DE RIESGO AVANZADA V3.0 - FUNCIONES
@@ -2355,9 +1904,10 @@ def ejecutar_trading(client, gemini_client):
             log("� Posiciones llenas. Monitoreando trailing SL...")
             return
         
-        # Obtener Fear & Greed Index
+        # Obtener Fear & Greed Index y Sentimiento World Monitor
         fg_valor, fg_clasificacion = obtener_fear_greed()
-        log(f"🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})")
+        sentimiento_wm = obtener_sentimiento_world_monitor()
+        log(f"🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion}) | 🌎 World Monitor: {sentimiento_wm}")
         
         # Obtener símbolos ya con posición (para evitar duplicados)
         simbolos_con_posicion = obtener_simbolos_con_posicion(client)
@@ -2435,13 +1985,17 @@ def ejecutar_trading(client, gemini_client):
                 
                 prompt = f"""Eres un Day Trader institucional. Tu objetivo exclusivo es identificar movimientos intradiarios limpios de entre 1.5% y 2.5% en la temporalidad de 1H. Ignora el ruido macroeconómico de largo plazo. Evalúa el Valor Esperado (EV) asumiendo un Take Profit de 2.4% y un Stop Loss de 1.2%.
 
-MERCADO GLOBAL:
+MERCADO GLOBAL Y SENTIMIENTO:
 🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
 - 0-25: Extreme Fear (sesgo LONG; los SHORTs necesitan confirmación bajista clara)
 - 26-45: Fear (favorecer LONGs en soporte)
 - 46-55: Neutral
 - 56-75: Greed (favorecer SHORTs tácticos)
 - 76-100: Extreme Greed (sesgo SHORT; LONG solo con confirmación alcista fuerte)
+
+🌎 World Monitor Sentiment: {sentimiento_wm}
+- Utiliza esta lectura extra para confirmar rupturas intradiarias y posibles sesgos institucionales que no se ven a simple vista.
+- Ajusta tu certeza si este sentimiento está alineado o va en contra del Fear & Greed Index.
 
 ══════════════════════════════════
 ANÁLISIS COMPLETO DE {symbol}
@@ -2471,8 +2025,8 @@ REGLAS OPERATIVAS:
 2. Prioriza operar a favor de la tendencia EMA dominante intradiaria.
 3. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra clara (RSI alto, precio en parte alta del rango) + patrón de reversión en velas.
 4. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay sobreventa clara (RSI bajo, precio en parte baja del rango) + patrón de rebote en velas.
-5. Fear < 25: favorece LONG; acepta SHORT solo si el momentum 1H es bajista y MACD/volumen apoyan la caída.
-6. Greed > 75: favorece SHORT; acepta LONG solo si el momentum 1H es alcista y MACD/volumen apoyan la subida.
+5. Considera fuertemente el Sentimiento de World Monitor en conjunto con Fear & Greed para predecir movimientos de las instituciones financieras de hoy.
+6. Greed > 75 y/o Sentimiento de World Monitor muy negativo: favorece SHORT; acepta LONG solo si el momentum es muy alcista.
 7. Si precio en 20% inferior del rango y RSI < 40: favorece LONG.
 8. Si precio en 80% superior del rango y RSI > 60: favorece SHORT.
 9. Confirma siempre que puedas con MACD (histograma) y volumen relativo.
