@@ -2395,7 +2395,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 
 💸 *PROTECCIÓN FUNDING FEES:* 🟢 ACTIVA
 ⏰ Cierre por tiempo: `5 días máx`
-📈 TP dinámico: `Después de 3 días`
+📈 TP dinámico: `Después de 1 día`
 💵 Funding vs PNL: `Auto-cierre si fees > ganancias`
 
 🧠 *CEREBRO IA:*
