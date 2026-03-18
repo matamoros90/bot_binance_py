@@ -29,7 +29,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V5.9"
-CONFIANZA_MINIMA = 0.60   # 60% - Umbral mas bajo para generar mas operaciones. IA menos estricta
+CONFIANZA_MINIMA = 0.50   # 50% - Umbral más bajo para generar más operaciones
 ESCUDO_TRABAJO = 1.00     # 100% del balance disponible como base de calculo de monto
 ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -694,9 +694,9 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
     atr_pct = float(ind_actual.get('atr_percent', 0))
     vol_rel = float(ind_actual.get('volumen_relativo', 1))
 
-    # Evita entrar cuando el mercado está prácticamente inmóvil
-    if atr_pct < 0.25:
-        return None, 0.0, None, "Volatilidad insuficiente para fallback"
+    # Evita solo los casos totalmente muertos (casi sin movimiento ni volumen)
+    if atr_pct < 0.05 and vol_rel < 0.5:
+        return None, 0.0, None, "Volatilidad y volumen casi nulos"
 
     # Continuación bajista
     if 'BAJISTA' in t1:
@@ -723,7 +723,14 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
     if fg_valor >= 88 and rsi >= 80 and posicion_rango >= 85 and macd_hist < 0.005:
         return "SHORT", 0.70, "temp_actual", "Fallback técnico: sobrecompra extrema + greed extremo"
 
-    return None, 0.0, None, "Sin setup fallback de alta convicción"
+    # Si no se encontró un setup de alta convicción, forzar una decisión simple
+    # basada solo en RSI y posición en el rango para evitar WAIT eternos.
+    if rsi <= 35 and posicion_rango <= 60:
+        return "LONG", 0.65, "temp_actual", "Fallback simple: RSI bajo + zona baja de rango"
+    if rsi >= 65 and posicion_rango >= 40:
+        return "SHORT", 0.65, "temp_actual", "Fallback simple: RSI alto + zona alta de rango"
+
+    return None, 0.0, None, "Sin setup fallback claro incluso con reglas relajadas"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONEXIÓN A BINANCE
@@ -2259,7 +2266,13 @@ Responde SOLO con este JSON, sin explicación adicional:
 
             # V5.4: TP/SL según régimen de mercado
             config_source = TP_SL_RANGO_CONFIG if modo_mercado == "RANGE" else TP_SL_CONFIG
-            config = config_source.get(temporalidad, config_source["1h"])
+            # Usar la config de la temporalidad si existe; si no, tomar la primera disponible
+            if temporalidad in config_source:
+                config = config_source[temporalidad]
+            else:
+                # fallback seguro independientemente de que exista clave "1h" o no
+                primera_key = next(iter(config_source.keys()))
+                config = config_source[primera_key]
 
             if accion == "LONG":
                 tp = precio_actual * (1 + config["tp"])

@@ -59,12 +59,12 @@ bot_binance_IA/
 
 ---
 
-## ⚙️ Configuración V5.9 (Agresiva)
+## ⚙️ Configuración V5.9 (Agresiva pero Simple)
 
 ```python
-CONFIANZA_MINIMA = 0.60          # 60% - Umbral bajo para ejecutar trades a cada momento
-ESCUDO_TRABAJO = 1.00            # Se evalúa el 100% del balance para Kelly
-APALANCAMIENTO = 3               # Seguro y evassivo contra liquidaciones relámpago
+CONFIANZA_MINIMA = 0.50          # 50% - Umbral más bajo para generar más operaciones
+ESCUDO_TRABAJO = 1.00            # Se evalúa el 100% del balance para Kelly / monto fijo
+APALANCAMIENTO = 3               # Seguro y evasivo contra liquidaciones relámpago
 TOP_ACTIVOS = 30                 # Rastrea las 30 criptos más movidas
 MAX_POSICIONES = 10              # Hasta 10 trades en simultáneo
 TRAILING_SL_PERCENT = 0.015      # Persigue ganancias en 1.5%
@@ -75,6 +75,8 @@ KELLY_ACTIVO = True              # Inversión matemática escalable
 KELLY_FRACCION = 0.5             # Medio-Kelly para evitar quemar cuentas en días laterales
 
 # V5.9 - Scalping Rápido (15 Minutos)
+TEMPORALIDADES = ['15m']         # Temporalidad principal (15m). Con 200 velas ≈ 2 días de historia.
+VELAS_CANTIDAD = 200             # De esas velas se envían ~120 más recientes a la IA (≈ 30 h, >1 día)
 TP_SL_CONFIG = {"15m": {"tp": 0.015, "sl": 0.008}}
 TP_SL_RANGO_CONFIG = {"15m": {"tp": 0.010, "sl": 0.006}}
 ```
