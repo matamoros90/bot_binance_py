@@ -125,7 +125,7 @@ stats_diarias = {
 # ═══════════════════════════════════════════════════════════════════════════════
 FUNDING_PROTECTION = True       # Activar protección de funding
 MAX_DIAS_POSICION = 5           # Cerrar posiciones después de 5 días
-TP_DINAMICO_DIAS = 3            # Después de 3 días, ajustar TP
+TP_DINAMICO_DIAS = 1            # Después de 1 día (24h), ajustar TP
 TP_DINAMICO_PERCENT = 0.02      # TP reducido a 2% después de X días
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -606,6 +606,10 @@ def calcular_kelly(saldo_disponible, confianza_ia):
     else:
         b = 1.5  # Default ratio
     
+    # Prevenir ZeroDivisionError si b es 0
+    if b <= 0:
+        b = 1.5
+        
     # Fórmula de Kelly
     # f* = (p * b - q) / b
     kelly = (p * b - q) / b

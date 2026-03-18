@@ -111,6 +111,10 @@ Durante la transición al modelo de Scalping de Alta Frecuencia (15m), se docume
    - **Problema**: Gemini estaba programado en el Prompt con la regla *"Asigna confianzas entre el 70% y el 85%"*. Al analizar 15m (un gráfico ruidoso por naturaleza), la IA tenía miedo de emitir señales y decidía `WAIT` constantemente deteniendo todas las órdenes.
    - **Solución**: En la v5.9.1 se ha prohibido explícitamente y eliminado la capacidad de emitir la señal `WAIT` en el prompt a Gemini. Al remover esto y flexibilizar los pre-filtros de salto térmico, el modelo ahora se ve obligado matemáticamente a decidir probabilísticamente si es mejor abrir un `LONG` o un `SHORT` según el momentum, y el threshold de confianza se ha mantenido lo suficientemente bajo como para atrapar esas decisiones intradiarias de forma ágil y ejecutarlas.
 
+3. **Error `float division by zero` en Ciclo de Trading (Kelly)**:
+   - **Problema**: El bot arrojaba un error matemático interrumpiendo el flujo operativo cuando el "Monto Ganado" caía estrepitosamente a $0$, provocando que en la fórmula del Criterio de Kelly el ratio `b` intentara dividir el cálculo de tamaño de posición por cero.
+   - **Solución**: Se integró una validación dura para prevenir el valor $0$. Si `b <= 0`, el ratio es obligado a volver al formato estándar de seguridad (`1.5`), evitando que Koyeb deba detener el ciclo por excepción matemática. Además, se agilizó el cierre de Take Profit dinámico reconfigurándolo a 24 horas (en lugar de 3 días) para agilizar las rotaciones de capital.
+
 ---
 
 ## 📦 Dependencias
