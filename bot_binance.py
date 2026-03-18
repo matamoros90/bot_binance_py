@@ -1,4 +1,4 @@
-# 🤖 BOT BINANCE FUTURES - GEMINI 2.0 FLASH
+# 🤖 BOT BINANCE FUTURES - GEMINI 2.5 FLASH
 # Trading 24/7 de Criptomonedas con IA
 # V5.3 - Multi-Timeframe + Prompt Enriquecido + SQLite + Métricas de Riesgo
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1811,6 +1811,20 @@ def es_hora_resumen_diario():
     """Verifica si es hora de enviar el resumen diario (22:00 Guatemala)."""
     return hora_local().hour == 22
 
+def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
+    """Genera un reporte detallado del estado inicial del bot"""
+    reporte = f"""🤖 *BINANCE BOT {BOT_VERSION} ONLINE*
+🚀 BINANCE FUTUROS: `{status_gemini}`
+
+💰 *BALANCE DETECTADO:*
+💵 USDT Disponible: `${saldo:.2f}`
+🛡️ Escudo 80/20 %
+👨🏻‍💻 Trabajo 80%
+🛟 Seguro 20%
+
+🤖 Gemini 2.5 Flash (New SDK): `{status_gemini}`"""
+    return reporte
+
 def enviar_resumen_diario(client):
     """V5.3: Envía resumen diario con balance, PNL y métricas de riesgo."""
     try:
@@ -1911,11 +1925,11 @@ def enviar_resumen_semanal(client):
         log(f"⚠️ Error enviando resumen semanal: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 + Fear & Greed) - NEW SDK
+# MÓDULO PRINCIPAL DE TRADING (Gemini 2.5 + Fear & Greed) - NEW SDK
 # ═══════════════════════════════════════════════════════════════════════════════
 def ejecutar_trading(client, gemini_client):
     log("\n" + "="*60)
-    log("🧠 GEMINI 2.0 + FEAR & GREED: Iniciando ciclo de análisis...")
+    log("🧠 GEMINI 2.5 + FEAR & GREED: Iniciando ciclo de análisis...")
     log("="*60)
     
     try:
@@ -1932,7 +1946,7 @@ def ejecutar_trading(client, gemini_client):
         log(f"📊 Posiciones: {pos_abiertas}/{MAX_POSICIONES} | Espacios: {espacios_disponibles}")
         
         if espacios_disponibles <= 0:
-            log("� Posiciones llenas. Monitoreando trailing SL...")
+            log(" Posiciones llenas. Monitoreando trailing SL...")
             return
         
         # Obtener Fear & Greed Index y Sentimiento World Monitor
@@ -1945,7 +1959,7 @@ def ejecutar_trading(client, gemini_client):
         
         # Obtener y analizar activos
         simbolos = obtener_simbolos_futuros(client)
-        log(f"� Analizando top {len(simbolos)} pares por volumen...")
+        log(f" Analizando top {len(simbolos)} pares por volumen...")
         
         # Lista para guardar oportunidades
         oportunidades = []
@@ -2046,7 +2060,7 @@ TEMPORALIDAD {temp_actual} (200 velas)
 - Volatilidad: {volatilidad:.2f}% | Pos en rango: {posicion_rango:.1f}%
 
 ══════════════════════════════════
-LAS 120 VELAS {temp_actual} MÁS RECIENTES (open,high,low,close,volume)
+LAS 120 VELAS {temp_actual} MÁS RECENTES (open,high,low,close,volume)
 Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
 Úsalas para confirmar o invalidar la lectura de los indicadores anteriores.
 ══════════════════════════════════
@@ -2074,7 +2088,7 @@ Responde SOLO con este JSON, sin explicación adicional:
                 for attempt in range(MAX_RETRIES):
                     try:
                         response = gemini_client.models.generate_content(
-                            model='gemini-2.0-flash',
+                            model='gemini-2.5-flash',
                             contents=prompt
                         )
                         respuesta = response.text
@@ -2385,7 +2399,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 💵 Funding vs PNL: `Auto-cierre si fees > ganancias`
 
 🧠 *CEREBRO IA:*
-🤖 Gemini 2.0 Flash (New SDK): `{status_gemini}`
+🤖 Gemini 2.5 Flash (New SDK): `{status_gemini}`
 
 ⏰ HORARIO: 24/7 (Sin pausas)
 🔄 Monitoreo: `cada {MONITOREO_INTERVALO}s`"""
@@ -2406,15 +2420,15 @@ except Exception as e:
     log(f"❌ ERROR FATAL: No se pudo conectar a Binance: {e}")
     sys.exit()
 
-# Configurar Gemini 2.0 - NUEVO SDK google-genai
+# Configurar Gemini 2.5 - NUEVO SDK google-genai
 status_gemini = "🔴 ERROR"
 gemini_client = None
 try:
     gemini_client = genai.Client(api_key=os.getenv("API_KEY_GEMINI"))
     status_gemini = "🟢 CONECTADO"
-    log("🧠 Cargando Motor: Gemini 2.0 Flash (New SDK)... ✅")
+    log("🧠 Cargando Motor: Gemini 2.5 Flash (New SDK)... ✅")
 except Exception as e:
-    log(f"⚠️ Error cargando Gemini 2.0: {e}")
+    log(f"⚠️ Error cargando Gemini 2.5: {e}")
     sys.exit()
 
 # Obtener Fear & Greed inicial

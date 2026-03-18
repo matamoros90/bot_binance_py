@@ -2,7 +2,7 @@
 
 ## 📋 Descripción
 
-Bot de trading automatizado para Binance Futures súper agresivo. Utiliza **Gemini 2.0 Flash** para generar señales de temporalidad corta, un **algoritmo de scraping de Sentimiento Global en World Monitor**, y un **motor de validación cuantitativa con Criterio de Kelly** para escalar cuentas rápidamente mediante interés compuesto.
+Bot de trading automatizado para Binance Futures súper agresivo. Utiliza **Gemini 2.5 Flash** para generar señales de temporalidad corta, un **algoritmo de scraping de Sentimiento Global en World Monitor**, y un **motor de validación cuantitativa con Criterio de Kelly** para escalar cuentas rápidamente mediante interés compuesto.
 
 Opera 24/7 con:
 
