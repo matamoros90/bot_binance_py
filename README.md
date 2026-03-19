@@ -29,7 +29,7 @@ Opera 24/7 con:
 
 ```text
 bot_binance_IA/
-├── bot_binance.py        # Módulo Único Integrado (Trading, Gemini, World Monitor, Riesgo, Indicadores)
+├── bot_binance.py        # Módulo Único Integrado (Trading, Gemini, Macroeconomía, Riesgo, Indicadores)
 ├── persistence.py        # SQLite: trades, balances, decisiones, métricas
 ├── backtesting.py        # Motor de backtesting con datos históricos
 ├── tests/

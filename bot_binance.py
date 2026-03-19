@@ -28,7 +28,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V5.9"
+BOT_VERSION = "V5.10"
 CONFIANZA_MINIMA = 0.50   # 50% - Umbral más bajo para generar más operaciones
 ESCUDO_TRABAJO = 1.00     # 100% del balance disponible como base de calculo de monto
 ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
@@ -285,7 +285,7 @@ def obtener_exchange_info(client, ttl=1800, force=False):
     return info
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FEAR & GREED INDEX Y WORLD MONITOR SENTIMENT
+# FEAR & GREED INDEX Y MACROECONOMÍA TRADICIONAL
 # ═══════════════════════════════════════════════════════════════════════════════
 def obtener_fear_greed():
     """Obtiene el índice Fear & Greed actual (0-100)"""
