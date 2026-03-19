@@ -1,13 +1,13 @@
-# 🤖 Bot Binance Futures V5.9 - High Frequency Scalping + World Monitor + Kelly Criterion
+# 🤖 Bot Binance Futures V5.10 - High Frequency Scalping + Macro Tradicional (yfinance) + Kelly Criterion
 
 ## 📋 Descripción
 
-Bot de trading automatizado para Binance Futures súper agresivo. Utiliza **Gemini 2.5 Flash** para generar señales de temporalidad corta, un **algoritmo de scraping de Sentimiento Global en World Monitor**, y un **motor de validación cuantitativa con Criterio de Kelly** para escalar cuentas rápidamente mediante interés compuesto.
+Bot de trading automatizado para Binance Futures súper agresivo. Utiliza **Gemini 2.5 Flash** para generar señales de temporalidad corta, una **integración con datos macroeconómicos tradicionales (S&P500) vía yfinance**, y un **motor de validación cuantitativa con Criterio de Kelly** para escalar cuentas rápidamente mediante interés compuesto.
 
 Opera 24/7 con:
 
 - Meta de Capital Agresivo: Orientado a Day Trading / Scalping de Alta Frecuencia (15 minutos).
-- Inteligencia Mixta: Fusión del Índice Fear & Greed y lectura instantánea del sentimiento Institucional (World-Monitor).
+- Inteligencia Mixta: Fusión del Índice Fear & Greed y lectura instantánea del comportamiento macro (Mercado Tradicional/S&P500).
 - Gestión de Riesgo Expansiva: Escala tamaños de posición cuando la cuenta entra en racha ganadora usando el Criterio de Kelly (Activado).
 - Operaciones en Paralelo: Capacidad para ejecutar hasta 10 operaciones de Scalping en simultáneo escaneando 30 Altcoins.
 - Persistencia en SQLite para auditoría y métricas de crecimiento.
@@ -18,7 +18,7 @@ Opera 24/7 con:
 
 | Aspecto         | Estado                                 |
 | --------------- | -------------------------------------- |
-| **Versión**     | V5.9.1 (Forced AI Scalping)            |
+| **Versión**     | V5.10 (Macro Integration)              |
 | **Plataforma**  | Koyeb (Deploy automático desde GitHub) |
 | **Modo**        | TESTNET / PRODUCCIÓN                   |
 | **Estado**      | 🟢 Operativo y Agresivo                  |
@@ -40,11 +40,11 @@ bot_binance_IA/
 
 ---
 
-## ✅ V5.9 — Integración World Monitor + Scalping Masivo
+## ✅ V5.10 — Integración Macro (yfinance) + Scalping Masivo
 
-1. **Scraper World Monitor 🌎**
-- El bot scrapea la página en tiempo real y detecta palabras clave (surge, buy, bullish vs crash, sell, bearish) para perfilar el sentimiento macro-institucional.
-- Gemini usa esta información como último validador para ejecutar operaciones intradiarias con apenas un 60% de certeza, apostando a las reacciones instantáneas del mercado.
+1. **Macro Tradicional S&P500 🌎**
+- El bot extrae el comportamiento del mercado tradicional (S&P500) a través de Yahoo Finance (`yfinance`) de manera más robusta que con scraping.
+- Gemini usa esta información como apoyo direccional macroeconómico para entender si el mercado global tiene aversión o apetito por el riesgo.
 
 2. **Temporalidades Rápidas (15m) + Múltiples Posiciones**
 - Escaneo incrementado al **TOP 30 de Criptomonedas**.
@@ -59,7 +59,7 @@ bot_binance_IA/
 
 ---
 
-## ⚙️ Configuración V5.9 (Agresiva pero Simple)
+## ⚙️ Configuración V5.10 (Agresiva pero Simple)
 
 ```python
 CONFIANZA_MINIMA = 0.50          # 50% - Umbral más bajo para generar más operaciones
@@ -74,7 +74,7 @@ MONITOREO_INTERVALO = 30         # Escanea cada 30 segundos
 KELLY_ACTIVO = True              # Inversión matemática escalable
 KELLY_FRACCION = 0.5             # Medio-Kelly para evitar quemar cuentas en días laterales
 
-# V5.9 - Scalping Rápido (15 Minutos)
+# V5.10 - Scalping Rápido (15 Minutos)
 TEMPORALIDADES = ['15m']         # Temporalidad principal (15m). Con 200 velas ≈ 2 días de historia.
 VELAS_CANTIDAD = 200             # De esas velas se envían ~120 más recientes a la IA (≈ 30 h, >1 día)
 TP_SL_CONFIG = {"15m": {"tp": 0.015, "sl": 0.008}}
@@ -87,7 +87,7 @@ TP_SL_RANGO_CONFIG = {"15m": {"tp": 0.010, "sl": 0.006}}
 
 ```text
 1. Obtener Fear & Greed Index (Miedo/Avaricia a Largo Plazo)
-2. Scrapear World-Monitor (Sentimiento Institucional de Hoy)
+2. Obtener Variación del S&P500 (yfinance) para medir apetito de riesgo Institucional
 3. Analizar top 30 pares por volumen en velas de 15 minutos (200 velas).
 4. Calcular indicadores técnicos (RSI, Bollinger, MACD, etc) en milisegundos.
 5. Gemini dictamina **obligatoriamente** LONG o SHORT integrando el contexto mundial (y su probabilidad matemática de acierto).
@@ -124,6 +124,7 @@ python-binance>=1.0.34
 google-genai
 python-dotenv
 requests
+yfinance
 ```
 
 ## 🔧 Variables de Entorno

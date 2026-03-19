@@ -298,26 +298,29 @@ def obtener_fear_greed():
     except:
         return 50, "Neutral"  # Default si falla
 
-def obtener_sentimiento_world_monitor():
-    """V5.8: Extrae sentimiento general desde world-monitor.com analizando palabras clave"""
+import yfinance as yf
+
+def obtener_macros_financieras_para_gemini():
+    """V5.10: Extrae comportamiento macroeconómico del mercado tradicional vía Yahoo Finance"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get("https://world-monitor.com/", headers=headers, timeout=10)
-        text = response.text.lower()
-        
-        # Conteo básico de palabras clave
-        c_positivas = len(re.findall(r'\b(bullish|positive|growth|surge|rally|buy)\b', text))
-        c_negativas = len(re.findall(r'\b(bearish|negative|decline|crash|drop|sell|fear)\b', text))
-        
-        if c_positivas > c_negativas * 1.5:
-            return "ALCISTA (Bullish Market Sentiment)"
-        elif c_negativas > c_positivas * 1.5:
-            return "BAJISTA (Bearish Market Sentiment)"
+        # Extraemos el comportamiento del S&P500
+        sp500 = yf.Ticker("^GSPC").history(period="2d")
+        if len(sp500) >= 2:
+            close_ayer = sp500['Close'].iloc[0]
+            close_hoy = sp500['Close'].iloc[1]
+            variacion_sp500 = ((close_hoy - close_ayer) / close_ayer) * 100
         else:
-            return "NEUTRAL (Mixed/Unclear Market Sentiment)"
+            variacion_sp500 = 0.0
+
+        if variacion_sp500 > 0.5:
+            return f"SP500: +{variacion_sp500:.2f}% (ALCISTA - Mercado tradicional fuerte)"
+        elif variacion_sp500 < -0.5:
+            return f"SP500: {variacion_sp500:.2f}% (BAJISTA - Mercado tradicional débil)"
+        else:
+            return f"SP500: {variacion_sp500:.2f}% (NEUTRAL - Consolidación)"
     except Exception as e:
-        log(f"⚠️ Error obteniendo sentimiento de World Monitor: {e}")
-        return "NEUTRAL (API Error)"
+        log(f"⚠️ Error obteniendo datos de Yahoo Finance: {e}")
+        return "Macro: NEUTRAL (API Error)"
 
 
 def _en_rango_minutos(actual_min, inicio_min, fin_min):
@@ -1949,10 +1952,10 @@ def ejecutar_trading(client, gemini_client):
             log(" Posiciones llenas. Monitoreando trailing SL...")
             return
         
-        # Obtener Fear & Greed Index y Sentimiento World Monitor
+        # Obtener Fear & Greed Index y Macroeconomía
         fg_valor, fg_clasificacion = obtener_fear_greed()
-        sentimiento_wm = obtener_sentimiento_world_monitor()
-        log(f"🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion}) | 🌎 World Monitor: {sentimiento_wm}")
+        macro_tradicional = obtener_macros_financieras_para_gemini()
+        log(f"🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion}) | 🌎 Macro Tradicional: {macro_tradicional}")
         
         # Obtener símbolos ya con posición (para evitar duplicados)
         simbolos_con_posicion = obtener_simbolos_con_posicion(client)
@@ -2039,9 +2042,9 @@ MERCADO GLOBAL Y SENTIMIENTO:
 - 56-75: Greed (favorecer SHORTs tácticos)
 - 76-100: Extreme Greed (sesgo SHORT; LONG solo con confirmación alcista fuerte)
 
-🌎 World Monitor Sentiment: {sentimiento_wm}
-- Utiliza esta lectura extra para confirmar rupturas intradiarias y posibles sesgos institucionales que no se ven a simple vista.
-- Ajusta tu certeza si este sentimiento está alineado o va en contra del Fear & Greed Index.
+🌎 Macroeconomía (Mercado Tradicional): {macro_tradicional}
+- Utiliza esta lectura extra para entender el flujo de capital global e institucional.
+- Si la macroeconomía refleja aversión al riesgo (Sp500 cayendo fuerte), los short en crypto tienen viento a favor.
 
 ══════════════════════════════════
 ANÁLISIS COMPLETO DE {symbol}
@@ -2074,7 +2077,7 @@ REGLAS OPERATIVAS SCALPING EXTREMO (15m):
 3. NO seas conservador. Un Scalper toma riesgos a favor del momentum más cercano.
 4. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra rápida (RSI > 70).
 5. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay rebote rápido en soporte o RSI < 30.
-6. World Monitor y Fear & Greed: Úsalos como apoyo direccional, pero no dejes que el "Fear" macro te asuste de tomar un LONG si el gráfico de 15m tiene buen momentum.
+6. Macroeconomía y Fear & Greed: Úsalos como apoyo direccional, pero no dejes que el "Fear" macro te asuste de tomar un LONG si el gráfico de 15m tiene buen momentum.
 7. Si precio en 20% inferior del rango y RSI < 40: Favorece LONG fuerte.
 8. Si precio en 80% superior del rango y RSI > 60: Favorece SHORT fuerte.
 9. Tienes que tomar decisiones: si hay oportunidad mínima, entra LONG o SHORT. Solo usa WAIT en consolidaciones muertas (volumen nulo o patrón inexistente).

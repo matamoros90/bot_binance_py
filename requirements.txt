@@ -2,3 +2,4 @@ python-binance>=1.0.34
 google-genai
 python-dotenv
 requests
+yfinance
