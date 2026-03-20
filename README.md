@@ -14,11 +14,11 @@ Opera 24/7 con:
 
 ---
 
-## 🚀 Estado del Proyecto (Última actualización: 17/03/2026)
+## 🚀 Estado del Proyecto (Última actualización: 19/03/2026)
 
 | Aspecto         | Estado                                 |
 | --------------- | -------------------------------------- |
-| **Versión**     | V5.10 (Macro Integration)              |
+| **Versión**     | V5.10 (Macro Integration + Hotfix)     |
 | **Plataforma**  | Koyeb (Deploy automático desde GitHub) |
 | **Modo**        | TESTNET / PRODUCCIÓN                   |
 | **Estado**      | 🟢 Operativo y Agresivo                  |
@@ -99,21 +99,44 @@ TP_SL_RANGO_CONFIG = {"15m": {"tp": 0.010, "sl": 0.006}}
 
 ---
 
-## 🛠️ Troubleshooting y Bugs Resueltos (V5.9)
+## 🛠️ Troubleshooting y Bugs Resueltos
 
-Durante la transición al modelo de Scalping de Alta Frecuencia (15m), se documentan los siguientes problemas críticos resueltos para referencia futura:
+### V5.10 Hotfix (19/03/2026) — Errores en TP Dinámico y Logs Spam
 
-1. **Bug de Temporalidad Hardcodeada (`ind_1h`)**: 
+Durante el monitoreo en producción de Koyeb se detectaron los siguientes errores que afectaban la estabilidad y calidad de los logs:
+
+1. **`APIError(-4130)`: TP Dinámico duplicado (5x cada 2 minutos)**
+   - **Problema**: La función `ajustar_tp_dinamico()` intentaba cancelar el Take Profit existente con un `except: pass`, silenciando errores de cancelación. Si la cancelación fallaba, el bot seguía adelante e intentaba crear un **segundo** TP con `closePosition=True`, lo que Binance rechaza con `-4130` porque solo puede existir uno por dirección.
+   - **Solución**: Se eliminó el `except: pass`. Ahora el bot verifica explícitamente si la cancelación fue exitosa (`tp_cancelado_ok`). Si falla, salta ese símbolo y reintenta en el siguiente ciclo (30s). Se agrega `time.sleep(0.4)` para que Binance procese la cancelación antes de crear la nueva orden.
+
+2. **`APIError(-2021)`: TP ya traspasado por el precio de mercado**
+   - **Problema**: Para posiciones SHORT muy rentables (>15%), el `nuevo_tp = entry_price * 0.98` podía quedar muy cerca o por encima del `mark_price` actual (ya que el precio bajó agresivamente). Binance rechaza TP que activarían de inmediato.
+   - **Solución**: Se agrega un margen de seguridad de ±0.15% sobre el `mark_price` actual (`mark_price * 0.9985` para SHORT, `mark_price * 1.0015` para LONG), garantizando siempre que el TP quede a una distancia operacional segura del precio en vivo.
+
+3. **Spam de log `"Bot pausado por drawdown diario"` cada 30 segundos**
+   - **Problema**: Cuando el drawdown diario se activaba, la función `verificar_drawdown_diario()` llamaba a `log()` directamente sin control de frecuencia, imprimiendo el mensaje en cada ciclo de bucle (30 segundos).
+   - **Solución**: Reemplazado por `log_throttled("drawdown_pausado_msg", ..., cooldown=300)`, limitando el mensaje a 1 vez cada 5 minutos.
+
+4. **Cierre por Funding Fees: posición quedaba parcialmente abierta (`QUICKUSDT`)**
+   - **Problema A**: La función `verificar_funding_vs_pnl()` calculaba el funding con `limit=100` sin filtro de fecha, acumulando todo el historial desde apertura (meses). Esto generaba **falsos positivos**: la comparación `abs(total_funding) > unrealized_pnl` era verdadera incluso cuando los fees recientes eran menores al PNL.
+   - **Problema B**: El cierre de mercado no usaba `reduceOnly=True`, lo que podía invertir la posición en vez de cerrarla en casos de discrepancia de cantidad.
+   - **Solución**: Se filtra el historial de funding a las **últimas 48 horas** usando `startTime`. Se agrega `reduceOnly=True` a la orden de cierre para garantizar que solo cierra sin posibilidad de inversión accidental.
+
+---
+
+### V5.9 (17/03/2026) — Bugs Resueltos
+
+1. **Bug de Temporalidad Hardcodeada (`ind_1h`)**:
    - **Problema**: El código arrastraba referencias absolutas a `1h` (ej. `ind_1h`, `velas_1h`) en lugar de usar la lista dinámica `TEMPORALIDADES[0]`. Esto provocaba que el bot intentara leer 200 velas de 1 hora mientras las variables internas procesaban los datos de 15 minutos, generando Crash de tipo `name 'ind_1h' is not defined`.
    - **Solución**: Se eliminó todo hardcodeo de `1h`. Ahora toda extracción de variables e indicadores depende de `temp_actual = TEMPORALIDADES[0]` y el sufijo general `ind_actual`.
 
 2. **Bloqueo Constante de la IA (`WAIT` Inexplicable a 70%)**:
    - **Problema**: Gemini estaba programado en el Prompt con la regla *"Asigna confianzas entre el 70% y el 85%"*. Al analizar 15m (un gráfico ruidoso por naturaleza), la IA tenía miedo de emitir señales y decidía `WAIT` constantemente deteniendo todas las órdenes.
-   - **Solución**: En la v5.9.1 se ha prohibido explícitamente y eliminado la capacidad de emitir la señal `WAIT` en el prompt a Gemini. Al remover esto y flexibilizar los pre-filtros de salto térmico, el modelo ahora se ve obligado matemáticamente a decidir probabilísticamente si es mejor abrir un `LONG` o un `SHORT` según el momentum, y el threshold de confianza se ha mantenido lo suficientemente bajo como para atrapar esas decisiones intradiarias de forma ágil y ejecutarlas.
+   - **Solución**: En la v5.9.1 se ha prohibido explícitamente y eliminado la capacidad de emitir la señal `WAIT` en el prompt a Gemini. Al remover esto y flexibilizar los pre-filtros de salto térmico, el modelo ahora se ve obligado matemáticamente a decidir probabilísticamente si es mejor abrir un `LONG` o un `SHORT` según el momentum.
 
 3. **Error `float division by zero` en Ciclo de Trading (Kelly)**:
-   - **Problema**: El bot arrojaba un error matemático interrumpiendo el flujo operativo cuando el "Monto Ganado" caía estrepitosamente a $0$, provocando que en la fórmula del Criterio de Kelly el ratio `b` intentara dividir el cálculo de tamaño de posición por cero.
-   - **Solución**: Se integró una validación dura para prevenir el valor $0$. Si `b <= 0`, el ratio es obligado a volver al formato estándar de seguridad (`1.5`), evitando que Koyeb deba detener el ciclo por excepción matemática. Además, se agilizó el cierre de Take Profit dinámico reconfigurándolo a 24 horas (en lugar de 3 días) para agilizar las rotaciones de capital.
+   - **Problema**: El bot arrojaba un error matemático interrumpiendo el flujo operativo cuando el "Monto Ganado" caía a $0, provocando que en la fórmula del Criterio de Kelly el ratio `b` intentara dividir por cero.
+   - **Solución**: Se integró una validación dura para prevenir el valor $0. Si `b <= 0`, el ratio es obligado a volver al formato estándar de seguridad (`1.5`).
 
 ---
 
