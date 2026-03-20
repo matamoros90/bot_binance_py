@@ -471,7 +471,12 @@ def verificar_drawdown_diario(balance_actual):
     
     # Si ya está pausado, verificar si debemos seguir pausados
     if stats_diarias["drawdown_pausado"]:
-        log("⏸️ Bot pausado por drawdown diario. Esperando nuevo día...")
+        # V5.10 FIX: Throttle al mensaje para evitar spam cada 30s
+        log_throttled(
+            "drawdown_pausado_msg",
+            "⏸️ Bot pausado por drawdown diario. Esperando nuevo día...",
+            cooldown=300  # Máximo 1 vez cada 5 minutos
+        )
         return False
     
     balance_inicio = stats_diarias["balance_inicio_dia"]
@@ -1458,11 +1463,14 @@ def verificar_funding_vs_pnl(client):
             
             # Obtener funding fees acumulados
             try:
-                # Obtener income de los últimos 7 días
+                # V5.10 FIX Bug #4: Filtrar solo últimas 48h para evitar comparar
+                # funding histórico acumulado contra PNL actual (falsos positivos)
+                start_time_ms = int((time.time() - 48 * 3600) * 1000)
                 income = client.futures_income_history(
                     symbol=symbol,
                     incomeType='FUNDING_FEE',
-                    limit=100
+                    startTime=start_time_ms,
+                    limit=20
                 )
                 
                 total_funding = sum(float(i.get('income', 0)) for i in income)
@@ -1475,12 +1483,13 @@ def verificar_funding_vs_pnl(client):
                     
                     log(f"💸 Cerrando {symbol}: Funding ${total_funding:.2f} > PNL ${unrealized_pnl:.2f}")
                     
-                    # Cerrar posición
+                    # V5.10 FIX Bug #4: Usar reduceOnly=True para garantizar cierre total sin inversión
                     client.futures_create_order(
                         symbol=symbol,
                         side=side,
                         type='MARKET',
-                        quantity=abs(cantidad)
+                        quantity=abs(cantidad),
+                        reduceOnly=True
                     )
                     
                     # V3.0: Ya no se envía Telegram individual
@@ -1542,22 +1551,40 @@ def ajustar_tp_dinamico(client):
                     # Calcular nuevo TP reducido
                     if side == 'LONG':
                         nuevo_tp = entry_price * (1 + TP_DINAMICO_PERCENT)
-                        # Solo ajustar si el precio ya superó el nuevo TP potencial
+                        # Solo ajustar si el precio aún no alcanzó el TP
                         if mark_price < nuevo_tp:
                             continue
-                    else:
+                        # V5.10 FIX Bug #2: Garantizar margen de seguridad vs precio actual
+                        # para evitar APIError(-2021): Order would immediately trigger
+                        nuevo_tp = max(nuevo_tp, mark_price * 1.0015)
+                    else:  # SHORT
                         nuevo_tp = entry_price * (1 - TP_DINAMICO_PERCENT)
+                        # Solo ajustar si el precio aún no bajó al TP
                         if mark_price > nuevo_tp:
                             continue
+                        # V5.10 FIX Bug #2: Garantizar margen de seguridad vs precio actual
+                        nuevo_tp = min(nuevo_tp, mark_price * 0.9985)
                     
-                    # Cancelar órdenes TP existentes
+                    # V5.10 FIX Bug #1: Cancelar TP existente y verificar éxito
+                    # antes de crear uno nuevo (evita APIError -4130)
+                    tp_cancelado_ok = False
                     try:
                         ordenes = client.futures_get_open_orders(symbol=symbol)
-                        for orden in ordenes:
-                            if orden['type'] == 'TAKE_PROFIT_MARKET':
+                        tps_encontrados = [o for o in ordenes if o['type'] == 'TAKE_PROFIT_MARKET']
+                        if not tps_encontrados:
+                            # No hay TP existente — podemos crear directamente
+                            tp_cancelado_ok = True
+                        else:
+                            for orden in tps_encontrados:
                                 client.futures_cancel_order(symbol=symbol, orderId=orden['orderId'])
-                    except:
-                        pass
+                            time.sleep(0.4)  # Espera breve para que Binance procese la cancelación
+                            tp_cancelado_ok = True
+                    except Exception as cancel_err:
+                        log(f"⚠️ No se pudo cancelar TP de {symbol}: {cancel_err}")
+                        tp_cancelado_ok = False
+                    
+                    if not tp_cancelado_ok:
+                        continue  # Saltar este símbolo, reintentar en el próximo ciclo
                     
                     # Crear nuevo TP más cercano
                     try:
@@ -1573,7 +1600,8 @@ def ajustar_tp_dinamico(client):
                             side=tp_side,
                             type='TAKE_PROFIT_MARKET',
                             stopPrice=nuevo_tp,
-                            closePosition=True
+                            closePosition=True,
+                            timeInForce='GTE_GTC'
                         )
                         
                         log(f"📈 TP Dinámico ajustado ({symbol}): ${nuevo_tp:.4f} (días: {dias_abierto})")
@@ -1581,7 +1609,7 @@ def ajustar_tp_dinamico(client):
                         # enviar_telegram(f"""... TP dinámico ajustado ...""")
                         
                     except Exception as e:
-                        log(f"⚠️ Error creando TP dinámico: {e}")
+                        log(f"⚠️ Error creando TP dinámico ({symbol}): {e}")
                         
             except Exception as e:
                 pass
