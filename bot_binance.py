@@ -28,8 +28,8 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V5.10"
-CONFIANZA_MINIMA = 0.50   # 50% - Umbral más bajo para generar más operaciones
+BOT_VERSION = "V5.12"
+CONFIANZA_MINIMA = 0.65   # V5.12: 65% mínimo (antes 50% dejaba pasar trades basura)
 ESCUDO_TRABAJO = 1.00     # 100% del balance disponible como base de calculo de monto
 ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -41,7 +41,7 @@ MAX_POSICIONES = 10       # Máximo 10 posiciones simultáneas (Aumentado para H
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
-TRAILING_SL_PERCENT = 0.015  # 1.5% - distancia del trailing
+TRAILING_SL_PERCENT = 0.025  # V5.12: 2.5% trailing (antes 1.5% — muy tight con 3x leverage)
 MONITOREO_INTERVALO = int(os.getenv("MONITOREO_INTERVALO", "30"))  # 30s default
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
@@ -142,12 +142,12 @@ TEMPORALIDADES = ['15m']  # V5.8: Temporalidad más baja para Scalping/Day Tradi
 
 # V5.8: Ajuste de Scalping para temporalidad de 15m
 TP_SL_CONFIG = {
-    "15m":  {"tp": 0.015, "sl": 0.008},    # +1.5%, -0.8% (R:R ~ 2:1) Adaptado a Scalping más rápido
+    "15m":  {"tp": 0.020, "sl": 0.008},    # V5.12: +2.0%, -0.8% (R:R 2.5:1) — más espacio para crecer
 }
 
 # V5.8: Modo rango (Ajustado a 15m)
 TP_SL_RANGO_CONFIG = {
-    "15m":  {"tp": 0.010, "sl": 0.006},     # +1.0%, -0.6%
+    "15m":  {"tp": 0.015, "sl": 0.006},     # V5.12: +1.5%, -0.6% (antes 1.0%)
 }
 FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
 
@@ -209,17 +209,132 @@ _positions_cache = {"ts": 0.0, "data": None}
 _exchange_info_cache = {"ts": 0.0, "data": None}
 _sl_retry_cooldown_until = {}  # {symbol: timestamp}
 SL_REINTENTO_COOLDOWN = 300  # 5 minutos
+_tp_dinamico_cooldown = {}  # {symbol: timestamp} — evita reintentos de TP cada 30s
+TP_DINAMICO_COOLDOWN = 3600  # 1 hora entre intentos de ajuste TP por símbolo
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SERVIDOR DE SALUD (KOYEB)
+# SERVIDOR DE SALUD + API REST (KOYEB)
 # ═══════════════════════════════════════════════════════════════════════════════
+from expo_push import guardar_push_token
+
+# Variables para almacenar último resumen (para servir via API)
+_ultimo_resumen_diario = {}
+_ultimo_resumen_semanal = {}
+_servidor_inicio = time.time()
+
 def servidor_salud():
     PORT = int(os.getenv("PORT", 8000))
     class Handler(http.server.SimpleHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
+
+        def _send_json(self, data, status=200):
+            """Envía respuesta JSON con CORS headers."""
+            body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
             self.end_headers()
-            self.wfile.write(f"BINANCE BOT {BOT_VERSION} - SCORE + EV + FALLBACK".encode())
+            self.wfile.write(body)
+
+        def do_OPTIONS(self):
+            """CORS preflight."""
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
+            self.end_headers()
+
+        def do_POST(self):
+            if self.path == "/api/register-push-token":
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(length))
+                    token = body.get("token", "")
+                    if token:
+                        guardar_push_token(token)
+                        self._send_json({"ok": True, "message": "Token registrado"})
+                    else:
+                        self._send_json({"ok": False, "message": "Token vacío"}, 400)
+                except Exception as e:
+                    self._send_json({"ok": False, "message": str(e)}, 500)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+
+        def do_GET(self):
+            path = self.path.split("?")[0]  # Ignorar query params
+
+            if path == "/api/status":
+                try:
+                    fg_val, fg_label = obtener_fear_greed()
+                    pos = contar_posiciones_abiertas(client) if client else 0
+                    bal = obtener_balance(client) if client else 0
+                    puede = verificar_drawdown_diario(bal) if client else False
+                    self._send_json({
+                        "version": BOT_VERSION,
+                        "balance": round(bal, 2),
+                        "posiciones_abiertas": pos,
+                        "max_posiciones": MAX_POSICIONES,
+                        "fear_greed": fg_val,
+                        "fear_greed_label": fg_label,
+                        "uptime_seconds": int(time.time() - _servidor_inicio),
+                        "puede_operar": puede,
+                        "timestamp": hora_local().isoformat(),
+                    })
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+
+            elif path == "/api/resumen-diario":
+                self._send_json(_ultimo_resumen_diario or {
+                    "fecha": hora_local().strftime("%d/%m/%Y"),
+                    "balance": 0, "pnl_dia": 0,
+                    "metricas": "", "timestamp": hora_local().isoformat(),
+                })
+
+            elif path == "/api/resumen-semanal":
+                self._send_json(_ultimo_resumen_semanal or {
+                    "balance_inicial": stats_semanales.get("balance_inicio_semana", 0),
+                    "balance_actual": 0, "roi_semanal": 0,
+                    "trades_ganados": stats_semanales.get("ganados", 0),
+                    "trades_perdidos": stats_semanales.get("perdidos", 0),
+                    "win_rate": 0, "profit_factor": 0,
+                    "timestamp": hora_local().isoformat(),
+                })
+
+            elif path == "/api/trades":
+                try:
+                    from persistence import _get_conn
+                    conn = _get_conn()
+                    c = conn.cursor()
+                    c.execute("""
+                        SELECT id, symbol, side, action, pnl, confidence,
+                               temporalidad, razon, closed_at
+                        FROM trades
+                        WHERE status = 'CLOSED' AND pnl != 0
+                        ORDER BY closed_at DESC
+                        LIMIT 20
+                    """)
+                    rows = c.fetchall()
+                    conn.close()
+                    trades = [dict(row) for row in rows]
+                    self._send_json(trades)
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+
+            elif path == "/api/metricas":
+                try:
+                    metricas = calcular_metricas_riesgo(dias=30)
+                    self._send_json(metricas)
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+
+            else:
+                # Health check original
+                self.send_response(200)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(f"BINANCE BOT {BOT_VERSION} - SCORE + EV + FALLBACK".encode())
+
         def log_message(self, format, *args):
             pass
     try:
@@ -735,14 +850,11 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
     if fg_valor >= 88 and rsi >= 80 and posicion_rango >= 85 and macd_hist < 0.005:
         return "SHORT", 0.70, "temp_actual", "Fallback técnico: sobrecompra extrema + greed extremo"
 
-    # Si no se encontró un setup de alta convicción, forzar una decisión simple
-    # basada solo en RSI y posición en el rango para evitar WAIT eternos.
-    if rsi <= 35 and posicion_rango <= 60:
-        return "LONG", 0.65, "temp_actual", "Fallback simple: RSI bajo + zona baja de rango"
-    if rsi >= 65 and posicion_rango >= 40:
-        return "SHORT", 0.65, "temp_actual", "Fallback simple: RSI alto + zona alta de rango"
+    # V5.12: Eliminados fallbacks de baja confianza (65%) que forzaban trades basura.
+    # Solo se mantienen los setups de alta convicción arriba (continuación tendencia 72%+
+    # y reversión extrema 70%).
 
-    return None, 0.0, None, "Sin setup fallback claro incluso con reglas relajadas"
+    return None, 0.0, None, "Sin setup fallback de alta convicción"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONEXIÓN A BINANCE
@@ -846,6 +958,18 @@ def obtener_balance(client):
     except Exception as e:
         log(f"⚠️ Error obteniendo balance: {e}")
         return 0
+
+
+def obtener_balance_total(client):
+    """V5.11: Obtiene equity total (wallet balance + unrealized PNL).
+    Usado para drawdown para evitar falsos positivos cuando hay ganancias abiertas."""
+    try:
+        account = client.futures_account()
+        return float(account.get('totalWalletBalance', 0)) + float(account.get('totalUnrealizedProfit', 0))
+    except Exception as e:
+        log(f"⚠️ Error obteniendo balance total: {e}")
+        # Fallback a wallet balance
+        return obtener_balance(client)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURAR APALANCAMIENTO
@@ -1040,15 +1164,24 @@ def actualizar_trailing_sl(client):
             
             tracking = posiciones_tracking[symbol]
             
-            # V4.0: Trailing SL mejorado - se activa con ganancia > 0.5%
+            # V5.12: Trailing SL con break-even + activación a +1.0%
             ganancia_actual = ((precio_actual - entry_price) / entry_price) if side == 'LONG' else ((entry_price - precio_actual) / entry_price)
             
             if side == 'LONG':
                 if precio_actual > tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                # V4.0 FIX: Activar trailing cuando ganancia > 0.5% (antes requería SL > entry)
-                if ganancia_actual > 0.005:  # > 0.5% de ganancia
+                # V5.12: Break-even SL — cuando ganancia >= 1.5%, mover SL a entry + 0.1%
+                if ganancia_actual >= 0.015 and (tracking['last_sl'] is None or tracking['last_sl'] < entry_price):
+                    be_sl = entry_price * 1.001  # Entry + 0.1% (cubre comisiones)
+                    cancelar_ordenes_sl(client, symbol)
+                    success, _ = crear_orden_sl(client, symbol, 'SELL', be_sl, abs(cantidad))
+                    if success:
+                        tracking['last_sl'] = be_sl
+                        log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (+0.1% vs entry)")
+                
+                # V5.12: Trailing activo cuando ganancia > 1.0% (antes 0.5%)
+                if ganancia_actual > 0.010:
                     nuevo_sl = tracking['best_price'] * (1 - TRAILING_SL_PERCENT)
                     
                     if tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']:
@@ -1063,8 +1196,17 @@ def actualizar_trailing_sl(client):
                 if precio_actual < tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                # V4.0 FIX: Activar trailing cuando ganancia > 0.5%
-                if ganancia_actual > 0.005:  # > 0.5% de ganancia
+                # V5.12: Break-even SL — cuando ganancia >= 1.5%, mover SL a entry - 0.1%
+                if ganancia_actual >= 0.015 and (tracking['last_sl'] is None or tracking['last_sl'] > entry_price):
+                    be_sl = entry_price * 0.999  # Entry - 0.1% (cubre comisiones)
+                    cancelar_ordenes_sl(client, symbol)
+                    success, _ = crear_orden_sl(client, symbol, 'BUY', be_sl, abs(cantidad))
+                    if success:
+                        tracking['last_sl'] = be_sl
+                        log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (-0.1% vs entry)")
+                
+                # V5.12: Trailing activo cuando ganancia > 1.0% (antes 0.5%)
+                if ganancia_actual > 0.010:
                     nuevo_sl = tracking['best_price'] * (1 + TRAILING_SL_PERCENT)
                     
                     if tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']:
@@ -1115,10 +1257,13 @@ def guardian_posiciones(client):
                 pnl_porcentaje = 0
             
             # ═══════════════════════════════════════════════════════════════════
-            # MOTOR DE SCALPING RÍGIDO (COBRO SEGURO $60.00)
+            # MOTOR DE SCALPING - COBRO SEGURO POR ROI% (V5.11)
             # ═══════════════════════════════════════════════════════════════════
-            SCALPING_TARGET = 60.00
-            if unrealized_pnl >= SCALPING_TARGET:
+            # V5.11: Target basado en 5% ROI sobre margen inicial (antes $60 fijo inalcanzable)
+            SCALPING_ROI_TARGET = 0.05  # 5% ROI sobre margen
+            margen_inicial = abs(cantidad) * entry_price / APALANCAMIENTO
+            scalping_target_usd = margen_inicial * SCALPING_ROI_TARGET
+            if unrealized_pnl >= scalping_target_usd:
                 side = 'SELL' if cantidad > 0 else 'BUY'
                 
                 log(f"⚡ SCALPING: {symbol} alcanzó ganancia rápida (${unrealized_pnl:.2f})")
@@ -1339,8 +1484,8 @@ def verificar_ordenes_sl_existen(client):
                         tiene_sl = False  # Forzar creación de nuevo SL
                 
                 if not tiene_sl:
-                    # V4.0 FIX: SL emergencia a -3% (antes -7%) — Guardian sigue como red de seguridad a -7%
-                    SL_EMERGENCIA_PERCENT = 0.03  # -3% es más razonable que -7%
+                    # V5.12: SL emergencia a -1.5% (antes -3% = -9% con 3x leverage)
+                    SL_EMERGENCIA_PERCENT = 0.015  # -1.5% alineado con config SL normal
                     # V5.1: anclar primero al entry para preservar riesgo previsto,
                     # y ajustar a un nivel válido vs mark para evitar rechazo inmediato.
                     if side == 'LONG':
@@ -1507,7 +1652,8 @@ def verificar_funding_vs_pnl(client):
 # PROTECCIÓN FUNDING FEES - TAKE PROFIT DINÁMICO
 # ═══════════════════════════════════════════════════════════════════════════════
 def ajustar_tp_dinamico(client):
-    """Reduce el TP después de X días para asegurar ganancias"""
+    """V5.11: Reduce el TP después de X días para asegurar ganancias.
+    Corregido: lógica de guard conditions, cooldown por símbolo, filtro amplio de TP."""
     try:
         positions = obtener_posiciones(client)
         
@@ -1524,6 +1670,12 @@ def ajustar_tp_dinamico(client):
             
             # Solo si está en ganancia
             if unrealized_pnl <= 0:
+                continue
+            
+            # V5.11: Cooldown por símbolo para evitar reintentar cada 30s
+            now = time.time()
+            cooldown_hasta = _tp_dinamico_cooldown.get(symbol, 0)
+            if now < cooldown_hasta:
                 continue
             
             # Verificar días abierto
@@ -1548,43 +1700,35 @@ def ajustar_tp_dinamico(client):
                 if dias_abierto >= TP_DINAMICO_DIAS:
                     side = 'LONG' if cantidad > 0 else 'SHORT'
                     
-                    # Calcular nuevo TP reducido
+                    # V5.11 FIX: Calcular TP cercano al precio actual para asegurar ganancia
+                    # El TP dinámico busca poner un TP ligeramente arriba/abajo del precio actual
+                    # para que se ejecute pronto y asegure la ganancia acumulada.
                     if side == 'LONG':
-                        nuevo_tp = entry_price * (1 + TP_DINAMICO_PERCENT)
-                        # Solo ajustar si el precio aún no alcanzó el TP
-                        if mark_price < nuevo_tp:
-                            continue
-                        # V5.10 FIX Bug #2: Garantizar margen de seguridad vs precio actual
-                        # para evitar APIError(-2021): Order would immediately trigger
-                        nuevo_tp = max(nuevo_tp, mark_price * 1.0015)
+                        # TP ligeramente por encima del precio actual
+                        nuevo_tp = max(entry_price * (1 + TP_DINAMICO_PERCENT), mark_price * 1.003)
                     else:  # SHORT
-                        nuevo_tp = entry_price * (1 - TP_DINAMICO_PERCENT)
-                        # Solo ajustar si el precio aún no bajó al TP
-                        if mark_price > nuevo_tp:
-                            continue
-                        # V5.10 FIX Bug #2: Garantizar margen de seguridad vs precio actual
-                        nuevo_tp = min(nuevo_tp, mark_price * 0.9985)
+                        # TP ligeramente por debajo del precio actual
+                        nuevo_tp = min(entry_price * (1 - TP_DINAMICO_PERCENT), mark_price * 0.997)
                     
-                    # V5.10 FIX Bug #1: Cancelar TP existente y verificar éxito
-                    # antes de crear uno nuevo (evita APIError -4130)
+                    # Cancelar TODOS los TP existentes (TAKE_PROFIT_MARKET y TAKE_PROFIT)
                     tp_cancelado_ok = False
                     try:
                         ordenes = client.futures_get_open_orders(symbol=symbol)
-                        tps_encontrados = [o for o in ordenes if o['type'] == 'TAKE_PROFIT_MARKET']
+                        tps_encontrados = [o for o in ordenes if o['type'] in ('TAKE_PROFIT_MARKET', 'TAKE_PROFIT')]
                         if not tps_encontrados:
-                            # No hay TP existente — podemos crear directamente
                             tp_cancelado_ok = True
                         else:
                             for orden in tps_encontrados:
                                 client.futures_cancel_order(symbol=symbol, orderId=orden['orderId'])
-                            time.sleep(0.4)  # Espera breve para que Binance procese la cancelación
+                            time.sleep(0.5)
                             tp_cancelado_ok = True
                     except Exception as cancel_err:
                         log(f"⚠️ No se pudo cancelar TP de {symbol}: {cancel_err}")
                         tp_cancelado_ok = False
                     
                     if not tp_cancelado_ok:
-                        continue  # Saltar este símbolo, reintentar en el próximo ciclo
+                        _tp_dinamico_cooldown[symbol] = now + TP_DINAMICO_COOLDOWN
+                        continue
                     
                     # Crear nuevo TP más cercano
                     try:
@@ -1605,11 +1749,16 @@ def ajustar_tp_dinamico(client):
                         )
                         
                         log(f"📈 TP Dinámico ajustado ({symbol}): ${nuevo_tp:.4f} (días: {dias_abierto})")
-                        # V3.0: Ya no se envía Telegram individual
-                        # enviar_telegram(f"""... TP dinámico ajustado ...""")
+                        _tp_dinamico_cooldown[symbol] = now + TP_DINAMICO_COOLDOWN
                         
                     except Exception as e:
-                        log(f"⚠️ Error creando TP dinámico ({symbol}): {e}")
+                        # V5.11: Throttle error y aplicar cooldown para evitar spam
+                        log_throttled(
+                            f"tp_dinamico_error_{symbol}",
+                            f"⚠️ Error creando TP dinámico ({symbol}): {e}",
+                            cooldown=TP_DINAMICO_COOLDOWN
+                        )
+                        _tp_dinamico_cooldown[symbol] = now + TP_DINAMICO_COOLDOWN
                         
             except Exception as e:
                 pass
@@ -1858,6 +2007,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 
 def enviar_resumen_diario(client):
     """V5.3: Envía resumen diario con balance, PNL y métricas de riesgo."""
+    global _ultimo_resumen_diario
     try:
         fecha = hora_local().strftime("%d/%m/%Y")
         balance = obtener_balance(client)
@@ -1886,6 +2036,23 @@ def enviar_resumen_diario(client):
         enviar_telegram(mensaje)
         log(f"📊 Resumen diario enviado: {fecha}")
         
+        # V5.10: Cachear para API + Push Notification
+        _ultimo_resumen_diario = {
+            "fecha": fecha, "balance": round(balance, 2),
+            "pnl_dia": round(pnl_dia, 2), "metricas": metricas_texto,
+            "timestamp": hora_local().isoformat(),
+        }
+        try:
+            from expo_push import enviar_push_notification
+            pnl_sign = "+" if pnl_dia >= 0 else ""
+            enviar_push_notification(
+                f"📊 Resumen Diario - {fecha}",
+                f"Balance: ${balance:.2f} | PNL: {pnl_sign}${pnl_dia:.2f}",
+                {"type": "resumen_diario"}
+            )
+        except Exception:
+            pass
+        
         # Registrar balance inicio del nuevo día
         registrar_balance_diario(
             (hora_local() + timedelta(days=1)).strftime("%Y-%m-%d"),
@@ -1899,7 +2066,7 @@ def enviar_resumen_semanal(client):
     Genera y envía un resumen semanal por Telegram (WOW Summary V5.7).
     Se envía cada viernes a las 18:00 (Guatemala).
     """
-    global stats_semanales
+    global stats_semanales, _ultimo_resumen_semanal
     try:
         # Obtener balance actual
         balance_actual = obtener_balance(client)
@@ -1940,6 +2107,27 @@ def enviar_resumen_semanal(client):
         
         enviar_telegram(mensaje)
         log(f"📊 Resumen semanal (WOW Summary) enviado correctamente.")
+        
+        # V5.10: Cachear para API + Push Notification
+        _ultimo_resumen_semanal = {
+            "balance_inicial": round(balance_inicial, 2),
+            "balance_actual": round(balance_actual, 2),
+            "roi_semanal": round(roi_semanal, 2),
+            "trades_ganados": trades_ganados,
+            "trades_perdidos": trades_perdidos,
+            "win_rate": round(win_rate, 1),
+            "profit_factor": round(profit_factor, 2),
+            "timestamp": hora_local().isoformat(),
+        }
+        try:
+            from expo_push import enviar_push_notification
+            enviar_push_notification(
+                "📊 Resumen Semanal 🗓️",
+                f"ROI: {roi_str} | Win Rate: {win_rate:.1f}% | Balance: ${balance_actual:,.2f}",
+                {"type": "resumen_semanal"}
+            )
+        except Exception:
+            pass
         
         # ═══════════════════════════════════════════════════════════════════
         # RESETEAR ESTADÍSTICAS PARA LA NUEVA SEMANA
@@ -2282,9 +2470,9 @@ Responde SOLO con este JSON, sin explicación adicional:
                 log(f"✅ Espacios llenos. {len(oportunidades) - ejecutadas} oportunidades pendientes.")
                 break
             
-            # V3.4: Verificar drawdown ANTES de cada orden
-            # Esto evita ejecutar múltiples órdenes si el balance ya bajó
-            balance_pre_orden = obtener_balance(client)
+            # V5.12: Verificar drawdown ANTES de cada orden usando equity total
+            # Evita pausar innecesariamente cuando hay unrealized PNL positivo
+            balance_pre_orden = obtener_balance_total(client)
             if not verificar_drawdown_diario(balance_pre_orden):
                 log(f"🛑 Drawdown detectado. Deteniendo ejecución de órdenes.")
                 break
@@ -2523,12 +2711,16 @@ while True:
         # ═════════════════════════════════════════════════════════════════════
         balance_actual = obtener_balance(client)
         
-        # Verificar si es un nuevo día (reinicia stats_diarias)
-        verificar_nuevo_dia(balance_actual)
+        # V5.11: Usar equity total (wallet + unrealized PNL) para drawdown
+        # Esto evita falsos positivos cuando hay ganancias abiertas
+        balance_equity = obtener_balance_total(client)
         
-        # Verificar drawdown máximo diario (-3%)
+        # Verificar si es un nuevo día (reinicia stats_diarias)
+        verificar_nuevo_dia(balance_equity)
+        
+        # Verificar drawdown máximo diario usando equity total
         # Si se supera, el bot pausa nuevos trades pero Guardian sigue activo
-        puede_operar = verificar_drawdown_diario(balance_actual)
+        puede_operar = verificar_drawdown_diario(balance_equity)
         
         # ═════════════════════════════════════════════════════════════════════
         # SCHEDULER OPERATIVO - control de carga CPU/API
