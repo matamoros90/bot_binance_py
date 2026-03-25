@@ -2021,7 +2021,7 @@ def enviar_resumen_diario(client):
         pnl_dia = stats_diarias.get('pnl_dia', 0)
         emoji_dia = "📈" if pnl_dia >= 0 else "📉"
         
-        mensaje = f"""📊 *RESUMEN DIARIO V5.3*
+        mensaje = f"""📊 *RESUMEN DIARIO {BOT_VERSION}*
 📅 {fecha}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -2031,7 +2031,7 @@ def enviar_resumen_diario(client):
 {metricas_texto}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🤖 Bot Binance V5.3 Activo ✅"""
+🤖 Bot Binance {BOT_VERSION} Activo ✅"""
         
         enviar_telegram(mensaje)
         log(f"📊 Resumen diario enviado: {fecha}")
