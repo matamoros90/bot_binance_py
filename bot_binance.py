@@ -1122,9 +1122,9 @@ def actualizar_trailing_sl(client):
 def guardian_posiciones(client):
     """
     Guardián de emergencia - Monitorea TODAS las posiciones independientemente.
-    Cierra automáticamente si la pérdida supera MAX_PERDIDA_PERMITIDA (-10%).
-    Esta función funciona INDEPENDIENTE de las órdenes SL en Binance.
+    Cierra automáticamente si la pérdida genera rebases.
     """
+    global _positions_cache
     if not GUARDIAN_ACTIVO:
         return
     
@@ -1178,7 +1178,6 @@ def guardian_posiciones(client):
                     )
                     
                     # V5.13 FIX: Limpiar caché manual después de cerrar a mercado para no desincronizar API
-                    global _positions_cache
                     _positions_cache["ts"] = 0.0
                     
                     log(f"✅ Posición {symbol} cerrada por Scalping. PNL: ${unrealized_pnl:.2f}")
@@ -1208,7 +1207,6 @@ def guardian_posiciones(client):
                     )
                     
                     # V5.13 FIX: Limpiar caché manual
-                    global _positions_cache
                     _positions_cache["ts"] = 0.0
                     
                     log(f"✅ Posición {symbol} cerrada por Guardián. PNL: ${unrealized_pnl:.2f}")
