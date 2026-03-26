@@ -403,39 +403,14 @@ def obtener_exchange_info(client, ttl=1800, force=False):
 # FEAR & GREED INDEX Y MACROECONOMÍA TRADICIONAL
 # ═══════════════════════════════════════════════════════════════════════════════
 def obtener_fear_greed():
-    """Obtiene el índice Fear & Greed actual (0-100)"""
-    try:
-        response = requests.get(FEAR_GREED_API, timeout=10)
-        data = response.json()
-        valor = int(data['data'][0]['value'])
-        clasificacion = data['data'][0]['value_classification']
-        return valor, clasificacion
-    except:
-        return 50, "Neutral"  # Default si falla
+    """V5.14: Módulo amputado para forzar Scalping Técnico (Sin ruido Macro)"""
+    return 50, "Neutral"
 
 import yfinance as yf
 
 def obtener_macros_financieras_para_gemini():
-    """V5.10: Extrae comportamiento macroeconómico del mercado tradicional vía Yahoo Finance"""
-    try:
-        # Extraemos el comportamiento del S&P500
-        sp500 = yf.Ticker("^GSPC").history(period="2d")
-        if len(sp500) >= 2:
-            close_ayer = sp500['Close'].iloc[0]
-            close_hoy = sp500['Close'].iloc[1]
-            variacion_sp500 = ((close_hoy - close_ayer) / close_ayer) * 100
-        else:
-            variacion_sp500 = 0.0
-
-        if variacion_sp500 > 0.5:
-            return f"SP500: +{variacion_sp500:.2f}% (ALCISTA - Mercado tradicional fuerte)"
-        elif variacion_sp500 < -0.5:
-            return f"SP500: {variacion_sp500:.2f}% (BAJISTA - Mercado tradicional débil)"
-        else:
-            return f"SP500: {variacion_sp500:.2f}% (NEUTRAL - Consolidación)"
-    except Exception as e:
-        log(f"⚠️ Error obteniendo datos de Yahoo Finance: {e}")
-        return "Macro: NEUTRAL (API Error)"
+    """V5.14: Módulo amputado para evitar alucinaciones en divergencias de corto plazo."""
+    return "(Macro ignorada - Operación 100% técnica)"
 
 
 def _en_rango_minutos(actual_min, inicio_min, fin_min):
@@ -670,88 +645,13 @@ def calcular_sl_atr(precio_actual, atr, side):
 
 def calcular_kelly(saldo_disponible, confianza_ia):
     """
-    Calcula el monto óptimo de inversión usando el Kelly Criterion.
-    
-    El Kelly Criterion es una fórmula matemática que determina el % óptimo
-    del capital a arriesgar basándose en el historial de trades.
-    
-    Fórmula de Kelly:
-        f* = (p * b - q) / b
-        Donde:
-        - p = probabilidad de ganar (win-rate)
-        - q = probabilidad de perder (1 - p)
-        - b = ratio ganancia/pérdida promedio
-    
-    Usamos "Medio Kelly" (KELLY_FRACCION = 0.5) para ser más conservadores,
-    ya que el Kelly completo puede ser muy agresivo.
-    
-    Parámetros:
-        saldo_disponible: Capital disponible para trading
-        confianza_ia: Confianza de la IA (0.66 a 1.0)
-    
-    Retorna:
-        float: Monto a invertir en USD
-    
-    Ejemplo:
-        - Win-rate: 60% (0.6)
-        - Ratio G/P: 1.5
-        - Kelly = (0.6 * 1.5 - 0.4) / 1.5 = 0.33 (33%)
-        - Medio Kelly = 16.5%
-        - Limitado a KELLY_MAXIMO (10%) → 10%
+    V5.14: Kelly Criterion ha sido desactivado temporalmente para sanear la cuenta.
+    Implementación Directa de FIXED RISK MANGEMENT: 5% por operación.
+    Esto permite usar interés compuesto sano (0.3% ganancia neta por trade asumiendo TP 2% en 3x).
     """
-    if not KELLY_ACTIVO:
-        # Fallback al método original basado en confianza
-        rango_confianza = 1.0 - CONFIANZA_MINIMA
-        exceso = max(0, confianza_ia - CONFIANZA_MINIMA)
-        porcentaje = 2 + (exceso / rango_confianza) * 8
-        return saldo_disponible * (porcentaje / 100)
-    
-    # V4.0 FIX: Usar stats_semanales (más datos) en lugar de stats_diarias
-    total_trades = stats_semanales["ganados"] + stats_semanales["perdidos"]
-    
-    # Si no hay suficientes trades, usar método original
-    if total_trades < 3:  # V4.0: Reducido de 5 a 3 trades mínimo
-        rango_confianza = 1.0 - CONFIANZA_MINIMA
-        exceso = max(0, confianza_ia - CONFIANZA_MINIMA)
-        porcentaje = 2 + (exceso / rango_confianza) * 8
-        return saldo_disponible * (porcentaje / 100)
-    
-    # Calcular win-rate (probabilidad de ganar)
-    p = stats_semanales["ganados"] / total_trades
-    q = 1 - p
-    
-    # Calcular ratio ganancia/pérdida promedio
-    # V4.0: Usar stats semanales para ratio ganancia/pérdida
-    if stats_semanales["perdidos"] > 0 and stats_semanales["monto_perdido"] > 0:
-        avg_ganancia = stats_semanales["monto_ganado"] / max(1, stats_semanales["ganados"])
-        avg_perdida = stats_semanales["monto_perdido"] / stats_semanales["perdidos"]
-        b = avg_ganancia / avg_perdida if avg_perdida > 0 else 1.5
-    else:
-        b = 1.5  # Default ratio
-    
-    # Prevenir ZeroDivisionError si b es 0
-    if b <= 0:
-        b = 1.5
-        
-    # Fórmula de Kelly
-    # f* = (p * b - q) / b
-    kelly = (p * b - q) / b
-    
-    # Aplicar fracción Kelly (más conservador)
-    kelly_ajustado = kelly * KELLY_FRACCION
-    
-    # Limitar entre mínimo y máximo
-    kelly_final = max(KELLY_MINIMO, min(KELLY_MAXIMO, kelly_ajustado))
-    
-    # Si Kelly es negativo, usar mínimo (no deberíamos operar, pero usamos mínimo)
-    if kelly < 0:
-        kelly_final = KELLY_MINIMO
-        log(f"⚠️ Kelly negativo ({kelly*100:.1f}%). Usando mínimo {KELLY_MINIMO*100}%")
-    
-    monto = saldo_disponible * kelly_final
-    
+    monto = saldo_disponible * 0.05
     if LOG_DETALLADO:
-        log(f"📊 Kelly: WR={p*100:.0f}% | Ratio={b:.2f} | Kelly={kelly*100:.1f}% | Final={kelly_final*100:.1f}% | ${monto:.2f}")
+        log(f"📊 Fixed Risk Sizing (5.0%) | Capital Protegido | Apostando: ${monto:.2f}")
     
     return round(monto, 2)
 
@@ -825,30 +725,26 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
     if atr_pct < 0.05 and vol_rel < 0.5:
         return None, 0.0, None, "Volatilidad y volumen casi nulos"
 
-    # Continuación bajista
+    # V5.13: Continuación bajista firme (Rebote a resistencia)
     if 'BAJISTA' in t1:
-        if 38 <= rsi <= 62 and posicion_rango >= 55 and macd_hist < 0:
+        if rsi >= 65 and posicion_rango >= 75 and macd_hist < 0:
             conf = 0.72 + (0.02 if vol_rel >= 1.10 else 0)
-            if fg_valor < 25:
-                conf -= 0.03
             conf = max(0.70, min(0.85, conf))
-            return "SHORT", conf, "temp_actual", "Fallback técnico: continuación bajista (EMA+MACD+rango)"
+            return "SHORT", conf, "temp_actual", "Fallback técnico: rebote bajista exhausto (RSI>65)"
 
-    # Continuación alcista
+    # V5.13: Continuación alcista firme (Caída a soporte)
     if 'ALCISTA' in t1:
-        if 38 <= rsi <= 62 and posicion_rango <= 45 and macd_hist > 0:
+        if rsi <= 35 and posicion_rango <= 25 and macd_hist > 0:
             conf = 0.72 + (0.02 if vol_rel >= 1.10 else 0)
-            if fg_valor > 75:
-                conf -= 0.03
             conf = max(0.70, min(0.85, conf))
-            return "LONG", conf, "temp_actual", "Fallback técnico: continuación alcista (EMA+MACD+rango)"
+            return "LONG", conf, "temp_actual", "Fallback técnico: rebote alcista exhausto (RSI<35)"
 
-    # Reversión extrema (muy selectiva)
-    if fg_valor <= 12 and rsi <= 20 and posicion_rango <= 15 and macd_hist > -0.005:
-        return "LONG", 0.70, "temp_actual", "Fallback técnico: sobreventa extrema + fear extremo"
+    # Reversión extrema (muy selectiva) independizada de Fear and Greed
+    if rsi <= 15 and posicion_rango <= 5 and macd_hist > -0.005:
+        return "LONG", 0.70, "temp_actual", "Fallback técnico: sobreventa absoluta y divergencia MACD"
 
-    if fg_valor >= 88 and rsi >= 80 and posicion_rango >= 85 and macd_hist < 0.005:
-        return "SHORT", 0.70, "temp_actual", "Fallback técnico: sobrecompra extrema + greed extremo"
+    if rsi >= 85 and posicion_rango >= 95 and macd_hist < 0.005:
+        return "SHORT", 0.70, "temp_actual", "Fallback técnico: sobrecompra absoluta y divergencia MACD"
 
     # V5.12: Eliminados fallbacks de baja confianza (65%) que forzaban trades basura.
     # Solo se mantienen los setups de alta convicción arriba (continuación tendencia 72%+
@@ -1164,26 +1060,26 @@ def actualizar_trailing_sl(client):
             
             tracking = posiciones_tracking[symbol]
             
-            # V5.12: Trailing SL con break-even + activación a +1.0%
+            # V5.13: Trailing SL firme con Break-even estricto
             ganancia_actual = ((precio_actual - entry_price) / entry_price) if side == 'LONG' else ((entry_price - precio_actual) / entry_price)
             
             if side == 'LONG':
                 if precio_actual > tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                # V5.12: Break-even SL — cuando ganancia >= 1.5%, mover SL a entry + 0.1%
-                if ganancia_actual >= 0.015 and (tracking['last_sl'] is None or tracking['last_sl'] < entry_price):
-                    be_sl = entry_price * 1.001  # Entry + 0.1% (cubre comisiones)
-                    cancelar_ordenes_sl(client, symbol)
-                    success, _ = crear_orden_sl(client, symbol, 'SELL', be_sl, abs(cantidad))
-                    if success:
-                        tracking['last_sl'] = be_sl
-                        log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (+0.1% vs entry)")
+                # V5.13: Paso 1 - Break-even SL riguroso a +1.0% de ganancia (mueve SL a entry + 0.15%)
+                if ganancia_actual >= 0.010 and ganancia_actual < 0.015:
+                    be_sl = entry_price * 1.0015  # Entry + 0.15% (cubre fees y deja margen)
+                    if tracking['last_sl'] is None or be_sl > tracking['last_sl']:
+                        cancelar_ordenes_sl(client, symbol)
+                        success, _ = crear_orden_sl(client, symbol, 'SELL', be_sl, abs(cantidad))
+                        if success:
+                            tracking['last_sl'] = be_sl
+                            log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (+0.15% vs entry)")
                 
-                # V5.12: Trailing activo cuando ganancia > 1.0% (antes 0.5%)
-                if ganancia_actual > 0.010:
-                    nuevo_sl = tracking['best_price'] * (1 - TRAILING_SL_PERCENT)
-                    
+                # V5.13: Paso 2 - Trailing SL activo solo si ganancia > 1.5%. (0.5% abajo del Best Price)
+                elif ganancia_actual >= 0.015:
+                    nuevo_sl = tracking['best_price'] * 0.995 # -0.5% del best price
                     if tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'SELL', nuevo_sl, abs(cantidad))
@@ -1196,19 +1092,19 @@ def actualizar_trailing_sl(client):
                 if precio_actual < tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                # V5.12: Break-even SL — cuando ganancia >= 1.5%, mover SL a entry - 0.1%
-                if ganancia_actual >= 0.015 and (tracking['last_sl'] is None or tracking['last_sl'] > entry_price):
-                    be_sl = entry_price * 0.999  # Entry - 0.1% (cubre comisiones)
-                    cancelar_ordenes_sl(client, symbol)
-                    success, _ = crear_orden_sl(client, symbol, 'BUY', be_sl, abs(cantidad))
-                    if success:
-                        tracking['last_sl'] = be_sl
-                        log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (-0.1% vs entry)")
+                # V5.13: Paso 1 - Break-even SL riguroso a +1.0% de ganancia (mueve SL a entry - 0.15%)
+                if ganancia_actual >= 0.010 and ganancia_actual < 0.015:
+                    be_sl = entry_price * 0.9985  # Entry - 0.15%
+                    if tracking['last_sl'] is None or be_sl < tracking['last_sl']:
+                        cancelar_ordenes_sl(client, symbol)
+                        success, _ = crear_orden_sl(client, symbol, 'BUY', be_sl, abs(cantidad))
+                        if success:
+                            tracking['last_sl'] = be_sl
+                            log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (-0.15% vs entry)")
                 
-                # V5.12: Trailing activo cuando ganancia > 1.0% (antes 0.5%)
-                if ganancia_actual > 0.010:
-                    nuevo_sl = tracking['best_price'] * (1 + TRAILING_SL_PERCENT)
-                    
+                # V5.13: Paso 2 - Trailing SL activo solo si ganancia > 1.5%. (+0.5% arriba del Best Price)
+                elif ganancia_actual >= 0.015:
+                    nuevo_sl = tracking['best_price'] * 1.005 # +0.5% del best price
                     if tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'BUY', nuevo_sl, abs(cantidad))
@@ -1259,8 +1155,8 @@ def guardian_posiciones(client):
             # ═══════════════════════════════════════════════════════════════════
             # MOTOR DE SCALPING - COBRO SEGURO POR ROI% (V5.11)
             # ═══════════════════════════════════════════════════════════════════
-            # V5.11: Target basado en 5% ROI sobre margen inicial (antes $60 fijo inalcanzable)
-            SCALPING_ROI_TARGET = 0.05  # 5% ROI sobre margen
+            # V5.13: Target basado en 6.5% ROI sobre margen inicial (Para que no robe el TP Limit de 2%)
+            SCALPING_ROI_TARGET = 0.065  # 6.5% ROI sobre margen
             margen_inicial = abs(cantidad) * entry_price / APALANCAMIENTO
             scalping_target_usd = margen_inicial * SCALPING_ROI_TARGET
             if unrealized_pnl >= scalping_target_usd:
@@ -1280,6 +1176,10 @@ def guardian_posiciones(client):
                         type='MARKET',
                         quantity=abs(cantidad)
                     )
+                    
+                    # V5.13 FIX: Limpiar caché manual después de cerrar a mercado para no desincronizar API
+                    global _positions_cache
+                    _positions_cache["ts"] = 0.0
                     
                     log(f"✅ Posición {symbol} cerrada por Scalping. PNL: ${unrealized_pnl:.2f}")
                     continue  # Saltar el resto de comprobaciones para este símbolo
@@ -1306,6 +1206,10 @@ def guardian_posiciones(client):
                         type='MARKET',
                         quantity=abs(cantidad)
                     )
+                    
+                    # V5.13 FIX: Limpiar caché manual
+                    global _positions_cache
+                    _positions_cache["ts"] = 0.0
                     
                     log(f"✅ Posición {symbol} cerrada por Guardián. PNL: ${unrealized_pnl:.2f}")
                     
@@ -2249,18 +2153,8 @@ def ejecutar_trading(client, gemini_client):
                 # ═══════════════════════════════════════════════════════════════════
                 
                 prompt = f"""Eres un Day Trader institucional. Tu objetivo exclusivo es identificar movimientos intradiarios limpios de entre 1.5% y 2.5% en la temporalidad de {temp_actual}. Ignora el ruido macroeconómico de largo plazo. Evalúa el Valor Esperado (EV) asumiendo los Take Profits agresivos de nuestras reglas.
-
-MERCADO GLOBAL Y SENTIMIENTO:
-🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})
-- 0-25: Extreme Fear (sesgo LONG; los SHORTs necesitan confirmación bajista clara)
-- 26-45: Fear (favorecer LONGs en soporte)
-- 46-55: Neutral
-- 56-75: Greed (favorecer SHORTs tácticos)
-- 76-100: Extreme Greed (sesgo SHORT; LONG solo con confirmación alcista fuerte)
-
-🌎 Macroeconomía (Mercado Tradicional): {macro_tradicional}
-- Utiliza esta lectura extra para entender el flujo de capital global e institucional.
-- Si la macroeconomía refleja aversión al riesgo (Sp500 cayendo fuerte), los short en crypto tienen viento a favor.
+MERCADO Y SENTIMIENTO:
+Operación en Vacio (Vacuum Trading). Has sido aislado del ruido informativo global. Tu sistema solo existe para decodificar los indicadores matemáticos de este Token.
 
 ══════════════════════════════════
 ANÁLISIS COMPLETO DE {symbol}
@@ -2293,7 +2187,7 @@ REGLAS OPERATIVAS SCALPING EXTREMO (15m):
 3. NO seas conservador. Un Scalper toma riesgos a favor del momentum más cercano.
 4. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra rápida (RSI > 70).
 5. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay rebote rápido en soporte o RSI < 30.
-6. Macroeconomía y Fear & Greed: Úsalos como apoyo direccional, pero no dejes que el "Fear" macro te asuste de tomar un LONG si el gráfico de 15m tiene buen momentum.
+6. Ruido Macro Cero: El Mercado Cripto Intradía ignora las noticias. Tu única deidad es el Price Action (Acción del Precio) y el momentum de estas velas.
 7. Si precio en 20% inferior del rango y RSI < 40: Favorece LONG fuerte.
 8. Si precio en 80% superior del rango y RSI > 60: Favorece SHORT fuerte.
 9. Tienes que tomar decisiones: si hay oportunidad mínima, entra LONG o SHORT. Solo usa WAIT en consolidaciones muertas (volumen nulo o patrón inexistente).
@@ -2376,14 +2270,7 @@ Responde SOLO con este JSON, sin explicación adicional:
                 score_ajuste = 0.0
                 reglas_aplicadas = []
 
-                # Fear extremo: penaliza SHORT ligero, pero prioriza el scalping rápido
-                if fg_valor < 25 and accion == "SHORT":
-                    if modo_mercado == "TREND" and 'BAJISTA' in tendencia_ema and rsi_actual > 35:
-                        score_ajuste -= 0.05
-                        reglas_aplicadas.append("Fear<25 penaliza SHORT (-5%)")
-                    else:
-                        score_ajuste -= 0.10
-                        reglas_aplicadas.append("Fear<25 penaliza SHORT sin confirmación (-10%)")
+                # Macro Scoring (V5.14: DESACTIVADO para Scalping 100% Técnico)
 
                 # Alineación/contradicción con tendencia principal de scalping
                 if accion == "LONG" and 'BAJISTA' in tendencia_ema:
