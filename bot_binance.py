@@ -28,7 +28,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V5.12"
+BOT_VERSION = "V5.15"
 CONFIANZA_MINIMA = 0.65   # V5.12: 65% mínimo (antes 50% dejaba pasar trades basura)
 ESCUDO_TRABAJO = 1.00     # 100% del balance disponible como base de calculo de monto
 ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
@@ -2046,11 +2046,11 @@ def enviar_resumen_semanal(client):
         log(f"⚠️ Error enviando resumen semanal: {e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MÓDULO PRINCIPAL DE TRADING (Gemini 2.5 + Fear & Greed) - NEW SDK
+# MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 Pure Price Action)
 # ═══════════════════════════════════════════════════════════════════════════════
 def ejecutar_trading(client, gemini_client):
     log("\n" + "="*60)
-    log("🧠 GEMINI 2.5 + FEAR & GREED: Iniciando ciclo de análisis...")
+    log("🧠 GEMINI 2.0 (Price Action Mode): Iniciando ciclo de análisis...")
     log("="*60)
     
     try:
@@ -2070,10 +2070,9 @@ def ejecutar_trading(client, gemini_client):
             log(" Posiciones llenas. Monitoreando trailing SL...")
             return
         
-        # Obtener Fear & Greed Index y Macroeconomía
+        # (V5.14: Desactivados Fear & Greed y Macro)
         fg_valor, fg_clasificacion = obtener_fear_greed()
         macro_tradicional = obtener_macros_financieras_para_gemini()
-        log(f"🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion}) | 🌎 Macro Tradicional: {macro_tradicional}")
         
         # Obtener símbolos ya con posición (para evitar duplicados)
         simbolos_con_posicion = obtener_simbolos_con_posicion(client)
@@ -2199,7 +2198,7 @@ Responde SOLO con este JSON, sin explicación adicional:
                 for attempt in range(MAX_RETRIES):
                     try:
                         response = gemini_client.models.generate_content(
-                            model='gemini-2.5-flash',
+                            model='gemini-2.0-flash',
                             contents=prompt
                         )
                         respuesta = response.text
@@ -2495,7 +2494,6 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📊 **RESUMEN DIARIO:** Activado ✅
 📍 Trailing SL: `1.5% activo` ✅
 ⏱️ Temporalidades: `{', '.join(TEMPORALIDADES)}`
-🎭 Fear & Greed: `{fg_valor} ({fg_clasificacion})`
 
 💸 *PROTECCIÓN FUNDING FEES:* 🟢 ACTIVA
 ⏰ Cierre por tiempo: `5 días máx`
@@ -2503,7 +2501,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 💵 Funding vs PNL: `Auto-cierre si fees > ganancias`
 
 🧠 *CEREBRO IA:*
-🤖 Gemini 2.5 Flash (New SDK): `{status_gemini}`
+🤖 Gemini 2.0 Flash (Technical Mode): `{status_gemini}`
 
 ⏰ HORARIO: 24/7 (Sin pausas)
 🔄 Monitoreo: `cada {MONITOREO_INTERVALO}s`"""
@@ -2513,7 +2511,7 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 # ARRANQUE PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════════
 log(f"🚀 Iniciando Bot Binance Futuros {BOT_VERSION}...")
-log("📊 Daily Summary + Guardian System + New GenAI SDK")
+log("📊 Fixed Risk Sizing + Technical Scalper + Gemini 2.0")
 
 # Conexión a Binance
 try:
@@ -2530,14 +2528,13 @@ gemini_client = None
 try:
     gemini_client = genai.Client(api_key=os.getenv("API_KEY_GEMINI"))
     status_gemini = "🟢 CONECTADO"
-    log("🧠 Cargando Motor: Gemini 2.5 Flash (New SDK)... ✅")
+    log("🧠 Cargando Motor: Gemini 2.0 Flash... ✅")
 except Exception as e:
-    log(f"⚠️ Error cargando Gemini 2.5: {e}")
+    log(f"⚠️ Error cargando Gemini 2.0: {e}")
     sys.exit()
 
 # Obtener Fear & Greed inicial
 fg_valor, fg_clasificacion = obtener_fear_greed()
-log(f"🎭 Fear & Greed Index: {fg_valor}/100 ({fg_clasificacion})")
 
 # Reporte de inicio - V3.0: Solo log, no Telegram (el resumen viene el viernes)
 reporte = generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion)
