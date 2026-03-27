@@ -1616,13 +1616,15 @@ def ajustar_tp_dinamico(client):
                     tp_cancelado_ok = False
                     try:
                         ordenes = client.futures_get_open_orders(symbol=symbol)
-                        tps_encontrados = [o for o in ordenes if o['type'] in ('TAKE_PROFIT_MARKET', 'TAKE_PROFIT')]
+                        # V5.15 Fix: Eliminar cualquier orden pendiente que estorbe al TP Dinámico (excepto Stop Loss)
+                        tps_encontrados = [o for o in ordenes if o['type'] != 'STOP_MARKET']
+                        
                         if not tps_encontrados:
                             tp_cancelado_ok = True
                         else:
                             for orden in tps_encontrados:
                                 client.futures_cancel_order(symbol=symbol, orderId=orden['orderId'])
-                            time.sleep(0.5)
+                            time.sleep(1.0) # Esperar a que la API asimile la purga
                             tp_cancelado_ok = True
                     except Exception as cancel_err:
                         log(f"⚠️ No se pudo cancelar TP de {symbol}: {cancel_err}")
