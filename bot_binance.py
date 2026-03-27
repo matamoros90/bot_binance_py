@@ -29,8 +29,8 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V5.15"
-CONFIANZA_MINIMA = 0.65   # V5.12: 65% mínimo (antes 50% dejaba pasar trades basura)
-ESCUDO_TRABAJO = 1.00     # 100% del balance disponible como base de calculo de monto
+CONFIANZA_MINIMA = 0.85   # V6.0: 85% mínimo (High Conviction Only)
+ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
@@ -41,7 +41,7 @@ MAX_POSICIONES = 10       # Máximo 10 posiciones simultáneas (Aumentado para H
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
-TRAILING_SL_PERCENT = 0.025  # V5.12: 2.5% trailing (antes 1.5% — muy tight con 3x leverage)
+TRAILING_SL_PERCENT = 0.005  # V6.0: 0.5% trailing agressivo para consolidar ROI diario rápidamente
 MONITOREO_INTERVALO = int(os.getenv("MONITOREO_INTERVALO", "30"))  # 30s default
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
@@ -138,16 +138,16 @@ LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
 # ═══════════════════════════════════════════════════════════════════════════════
-TEMPORALIDADES = ['15m']  # V5.8: Temporalidad más baja para Scalping/Day Trading Activo
+TEMPORALIDADES = ['1h']  # V6.0: Escala Institucional excluyendo el "ruido" de la volatilidad Intradía menor
 
-# V5.8: Ajuste de Scalping para temporalidad de 15m
+# V6.0: Ajuste de Scalping para temporalidad de 1H
 TP_SL_CONFIG = {
-    "15m":  {"tp": 0.020, "sl": 0.008},    # V5.12: +2.0%, -0.8% (R:R 2.5:1) — más espacio para crecer
+    "1h":  {"tp": 0.030, "sl": 0.015},    # V6.0: +3.0%, -1.5% (R:R 2:1)
 }
 
-# V5.8: Modo rango (Ajustado a 15m)
+# V6.0: Modo rango
 TP_SL_RANGO_CONFIG = {
-    "15m":  {"tp": 0.015, "sl": 0.006},     # V5.12: +1.5%, -0.6% (antes 1.0%)
+    "1h":  {"tp": 0.020, "sl": 0.010},     # V6.0: +2.0%, -1.0%
 }
 FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
 
@@ -645,13 +645,12 @@ def calcular_sl_atr(precio_actual, atr, side):
 
 def calcular_kelly(saldo_disponible, confianza_ia):
     """
-    V5.14: Kelly Criterion ha sido desactivado temporalmente para sanear la cuenta.
-    Implementación Directa de FIXED RISK MANGEMENT: 5% por operación.
-    Esto permite usar interés compuesto sano (0.3% ganancia neta por trade asumiendo TP 2% en 3x).
+    V6.0: Instauración de Riesgo Presidencial (Búnker 80/20). 
+    Límite máximo del 2.0% del balance total asociado al pool operativo para evitar ruido y pérdidas progresivas.
     """
-    monto = saldo_disponible * 0.05
+    monto = saldo_disponible * 0.02
     if LOG_DETALLADO:
-        log(f"📊 Fixed Risk Sizing (5.0%) | Capital Protegido | Apostando: ${monto:.2f}")
+        log(f"📊 Fixed Risk Sizing (2.0%) | Búnker Activo | Apostando: ${monto:.2f}")
     
     return round(monto, 2)
 
@@ -679,19 +678,19 @@ def actualizar_stats_trade(pnl):
 # CÁLCULO DE MONTO SIMPLE - 5% FIJO DEL BALANCE
 # ═══════════════════════════════════════════════════════════════════════════════
 def calcular_monto(saldo, confianza):
-    """Calcula un monto fijo del 5% del saldo operativo.
+    """Calcula un monto fijo bajo el marco Búnker (Reserva de Seguridad).
     
-    - Usa el 100% del balance para el ESCUDO_TRABAJO (1.0).
-    - El interés compuesto ocurre de forma natural: a mayor saldo, mayor monto en USD.
-    - La confianza de la IA se usa solo para decidir si entrar o no (CONFIANZA_MINIMA),
-      no para escalar agresivamente el tamaño de la posición.
+    - Bloquea el 80% del balance como capital intocable.
+    - Usa el 20% como margen máximo operativo (ESCUDO_TRABAJO).
+    - Riesgo de operación fijado en 2.0% del balance total (para evitar rachas negativas).
     """
     saldo_disponible = saldo * ESCUDO_TRABAJO
-    porcentaje = 5.0  # 5% fijo por operación sobre el saldo disponible
-    monto = saldo_disponible * (porcentaje / 100.0)
+    porcentaje = 2.0  # 2% fijo por operación sobre el saldo TOTAL
+    monto = saldo * (porcentaje / 100.0)
 
     if LOG_DETALLADO:
-        log(f"   💰 Monto fijo: {porcentaje:.1f}% del saldo operativo | ${monto:.2f}")
+        log(f"   🛡️ BÚNKER ALERTA: Saldo Total ${saldo:.2f} | Margen Disponible ${saldo_disponible:.2f}")
+        log(f"   💰 Notional Operativo: {porcentaje:.1f}% del balance total | ${monto:.2f}")
 
     return max(1, round(monto, 2))
 
@@ -721,9 +720,9 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
     atr_pct = float(ind_actual.get('atr_percent', 0))
     vol_rel = float(ind_actual.get('volumen_relativo', 1))
 
-    # Evita solo los casos totalmente muertos (casi sin movimiento ni volumen)
-    if atr_pct < 0.05 and vol_rel < 0.5:
-        return None, 0.0, None, "Volatilidad y volumen casi nulos"
+    # Filtro estricto de liquidez (RV < 1.5x) para descartar activos muertos o sin volumen
+    if atr_pct < 0.05 or vol_rel < 1.5:
+        return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 1.5x o volatilidad nula"
 
     # V5.13: Continuación bajista firme (Rebote a resistencia)
     if 'BAJISTA' in t1:
@@ -855,6 +854,14 @@ def obtener_balance(client):
         log(f"⚠️ Error obteniendo balance: {e}")
         return 0
 
+def obtener_balance_disponible(client):
+    """V6.0: Obtiene el free margin para asegurar que queda bloqueada la reserva del 20%"""
+    try:
+        account = client.futures_account()
+        return float(account.get('availableBalance', 0))
+    except Exception as e:
+        log(f"⚠️ Error obteniendo balance disponible: {e}")
+        return 0
 
 def obtener_balance_total(client):
     """V5.11: Obtiene equity total (wallet balance + unrealized PNL).
@@ -1060,58 +1067,36 @@ def actualizar_trailing_sl(client):
             
             tracking = posiciones_tracking[symbol]
             
-            # V5.13: Trailing SL firme con Break-even estricto
+            # V6.0: Trailing SL agresivo (Activación al +0.8%)
             ganancia_actual = ((precio_actual - entry_price) / entry_price) if side == 'LONG' else ((entry_price - precio_actual) / entry_price)
             
             if side == 'LONG':
                 if precio_actual > tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                # V5.13: Paso 1 - Break-even SL riguroso a +1.0% de ganancia (mueve SL a entry + 0.15%)
-                if ganancia_actual >= 0.010 and ganancia_actual < 0.015:
-                    be_sl = entry_price * 1.0015  # Entry + 0.15% (cubre fees y deja margen)
-                    if tracking['last_sl'] is None or be_sl > tracking['last_sl']:
-                        cancelar_ordenes_sl(client, symbol)
-                        success, _ = crear_orden_sl(client, symbol, 'SELL', be_sl, abs(cantidad))
-                        if success:
-                            tracking['last_sl'] = be_sl
-                            log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (+0.15% vs entry)")
-                
-                # V5.13: Paso 2 - Trailing SL activo solo si ganancia > 1.5%. (0.5% abajo del Best Price)
-                elif ganancia_actual >= 0.015:
-                    nuevo_sl = tracking['best_price'] * 0.995 # -0.5% del best price
+                if ganancia_actual >= 0.008:
+                    nuevo_sl = tracking['best_price'] * (1 - TRAILING_SL_PERCENT)
                     if tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'SELL', nuevo_sl, abs(cantidad))
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((nuevo_sl - entry_price) / entry_price) * 100
-                            log(f"📈 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
+                            log(f"📈 Trailing SL V6.0 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
             
             else:  # SHORT
                 if precio_actual < tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                # V5.13: Paso 1 - Break-even SL riguroso a +1.0% de ganancia (mueve SL a entry - 0.15%)
-                if ganancia_actual >= 0.010 and ganancia_actual < 0.015:
-                    be_sl = entry_price * 0.9985  # Entry - 0.15%
-                    if tracking['last_sl'] is None or be_sl < tracking['last_sl']:
-                        cancelar_ordenes_sl(client, symbol)
-                        success, _ = crear_orden_sl(client, symbol, 'BUY', be_sl, abs(cantidad))
-                        if success:
-                            tracking['last_sl'] = be_sl
-                            log(f"🛡️ Break-even SL ({symbol}): ${be_sl:.4f} (-0.15% vs entry)")
-                
-                # V5.13: Paso 2 - Trailing SL activo solo si ganancia > 1.5%. (+0.5% arriba del Best Price)
-                elif ganancia_actual >= 0.015:
-                    nuevo_sl = tracking['best_price'] * 1.005 # +0.5% del best price
+                if ganancia_actual >= 0.008:
+                    nuevo_sl = tracking['best_price'] * (1 + TRAILING_SL_PERCENT)
                     if tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'BUY', nuevo_sl, abs(cantidad))
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((entry_price - nuevo_sl) / entry_price) * 100
-                            log(f"📉 Trailing SL ajustado ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
+                            log(f"📉 Trailing SL V6.0 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
                         
     except Exception as e:
         log(f"⚠️ Error en trailing SL: {e}")
@@ -2056,12 +2041,21 @@ def ejecutar_trading(client, gemini_client):
     log("="*60)
     
     try:
-        saldo = obtener_balance(client)
-        if saldo < 1:
+        saldo_total = obtener_balance(client)
+        saldo_disponible = obtener_balance_disponible(client)
+        
+        if saldo_total < 1:
             log("⚠️ Balance insuficiente para operar")
             return
             
-        log(f"💰 Balance disponible: ${saldo:.2f} USDT")
+        log(f"💰 Balance total: ${saldo_total:.2f} USDT | Disponible (Margen Libre): ${saldo_disponible:.2f}")
+        
+        # V6.0: Reserva Institucional del 20%
+        # Prohibición de apalancar si más del 80% de la equidad total está cautiva
+        reserva_obligatoria = saldo_total * ESCUDO_SEGURO
+        if saldo_disponible <= reserva_obligatoria:
+            log(f"🛡️ RESERVA DE CAPITAL INTACTA: Operaciones bloqueadas. Disp: ${saldo_disponible:.2f} <= Límite Intocable: ${reserva_obligatoria:.2f}")
+            return
         
         # Verificar espacios disponibles
         pos_abiertas = contar_posiciones_abiertas(client)
@@ -2128,6 +2122,14 @@ def ejecutar_trading(client, gemini_client):
                 # ═══════════════════════════════════════════════════════════════════
                 rsi = ind_actual['rsi']
                 tendencia = (ind_actual.get('tendencia_ema', '') or '').upper()
+                rv = float(ind_actual.get('volumen_relativo', 1))
+                ema200 = float(ind_actual.get('ema200', 0)) if ind_actual.get('ema200') is not None else 0
+                
+                # V6.0: FILTRO INSTITUCIONAL DE LIQUIDEZ Y EMA200
+                if rv < 1.5:
+                    if LOG_DETALLADO:
+                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 1.50x)")
+                    continue
                 
                 # Skip si RSI estrictamente neutral + tendencia lateral + rango medio apretado
                 if (45 < rsi < 55 and 'LATERAL' in tendencia and 45 < posicion_rango < 55):
@@ -2151,9 +2153,17 @@ def ejecutar_trading(client, gemini_client):
                 # V5.9: PROMPT ENRIQUECIDO SCALPING INSTITUCIONAL
                 # ═══════════════════════════════════════════════════════════════════
                 
-                prompt = f"""Eres un Day Trader institucional. Tu objetivo exclusivo es identificar movimientos intradiarios limpios de entre 1.5% y 2.5% en la temporalidad de {temp_actual}. Ignora el ruido macroeconómico de largo plazo. Evalúa el Valor Esperado (EV) asumiendo los Take Profits agresivos de nuestras reglas.
+                prompt = f"""Eres un Analista Cuantitativo Institucional operando en la temporalidad de {temp_actual}. Tu misión primaria NO es operar frecuentemente, sino proteger el capital y buscar setups con Esperanza Matemática (EV) estrictamente positiva.
+
+REGLAS INSTITUCIONALES (V6.0):
+1. EXPECTED VALUE (EV) MATEMÁTICO: Toda decisión auditable debe tener un EV a favor.
+   Fórmula estricta de EV: EV = (P_win * Profit) - (P_loss * Loss).
+   Si el resultado del EV no es sustancialmente positivo, la decisión lógica y mandatoria debe ser "WAIT".
+2. REGLA TENDENCIAL EMA 200: ESTRICTAMENTE PROHIBIDO emitir la señal 'LONG' si el Precio Actual está por debajo de la EMA 200. Cualquier compra bajo la EMA 200 resultará en la pérdida total del fondo institucional.
+3. EXIGENCIA DE CONFIANZA: Tu umbral mínimo para operar es 85%. Si no tienes >85% de certeza vía divergencias o confirmaciones multi-indicador, responde "WAIT" con 0% de confianza.
+
 MERCADO Y SENTIMIENTO:
-Operación en Vacio (Vacuum Trading). Has sido aislado del ruido informativo global. Tu sistema solo existe para decodificar los indicadores matemáticos de este Token.
+Operación en Vacio (Vacuum Trading). Has sido aislado del ruido informativo global. Tu sistema solo existe para decodificar la geometría matemática de este Token.
 
 ══════════════════════════════════
 ANÁLISIS COMPLETO DE {symbol}
@@ -2178,21 +2188,15 @@ Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
 ══════════════════════════════════
 {velas_csv}
 
-REGLAS OPERATIVAS SCALPING EXTREMO (15m):
-1. Tu misión es operar Frecuentemente. Identifica cualquier setup intradiario que ofrezca un rápido 1.5%.
-2. Escala de CONFIANZA obligatoria:
-   - Si respondes "WAIT", la CONFIANZA debe ser 0%.
-   - Si respondes "LONG" o "SHORT", la CONFIANZA debe ser realista según el setup técnico (ej. 60% a 95%).
-3. NO seas conservador. Un Scalper toma riesgos a favor del momentum más cercano.
-4. Tendencia ALCISTA: prioriza LONG; permite SHORT si hay sobrecompra rápida (RSI > 70).
-5. Tendencia BAJISTA: prioriza SHORT; permite LONG si hay rebote rápido en soporte o RSI < 30.
-6. Ruido Macro Cero: El Mercado Cripto Intradía ignora las noticias. Tu única deidad es el Price Action (Acción del Precio) y el momentum de estas velas.
-7. Si precio en 20% inferior del rango y RSI < 40: Favorece LONG fuerte.
-8. Si precio en 80% superior del rango y RSI > 60: Favorece SHORT fuerte.
-9. Tienes que tomar decisiones: si hay oportunidad mínima, entra LONG o SHORT. Solo usa WAIT en consolidaciones muertas (volumen nulo o patrón inexistente).
+CRITERIOS DE ENTRADA V6.0:
+1. No persigas precios ni operes de forma impulsiva. Entra únicamente en Pullbacks a medias móviles (EMA20/EMA50) o rupturas confirmadas con alto ATR.
+2. Si el RSI está en rango medio (45-55) y sin divergencias claras de agotamiento, la única respuesta lógica y matemática es WAIT.
+3. Tendencia ALCISTA (precio sobre EMA200): prioriza LONG; permite SHORT únicamente si ves divergencia bajista MASIVA con RSI en sobrecompra extrema (>75).
+4. Tendencia BAJISTA (precio bajo EMA200): prioriza SHORT; PROHIBIDÍSIMO ENTRAR EN LONG.
+5. El ruido macroecosistémico no existe. El Price Action limpio es tu única verdad absoluta.
 
-Responde SOLO con este JSON, sin explicación adicional:
-{{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.75, "TEMPORALIDAD": "{temp_actual}", "RAZON": "explicacion breve"}}"""
+Responde SOLO con este formato JSON perfecto:
+{{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.90, "TEMPORALIDAD": "{temp_actual}", "RAZON": "Explicación breve del Setup y del EV Positivo detectado"}}"""
                 
                 # V3.7: Retry logic con exponential backoff para errores 429
                 MAX_RETRIES = 3
@@ -2296,11 +2300,12 @@ Responde SOLO con este JSON, sin explicación adicional:
                 ema_200_actual = ind_actual.get('ema200')
                 if ema_200_actual and accion in ["LONG", "SHORT"]:
                     if accion == "LONG" and precio_actual < ema_200_actual:
-                        log(f"   ⚠️ GPS: LONG contra EMA200 (Precio ${precio_actual} < EMA200 ${ema_200_actual}) - Penalización ligera.")
-                        score_ajuste -= 0.05
+                        log(f"   🛡️ V6.0 REJECT: Intento de LONG bajo EMA200 de 1H (Precio ${precio_actual} < EMA200 ${ema_200_actual}). Forzando WAIT.")
+                        accion = "WAIT"
+                        confianza = 0
                     elif accion == "SHORT" and precio_actual > ema_200_actual:
-                        log(f"   ⚠️ GPS: SHORT contra EMA200 (Precio ${precio_actual} > EMA200 ${ema_200_actual}) - Penalización ligera.")
-                        score_ajuste -= 0.05
+                        log(f"   ⚠️ GPS: SHORT contra EMA200 (Precio ${precio_actual} > EMA200 ${ema_200_actual}) - Penalización fuerte.")
+                        score_ajuste -= 0.15
 
                 if accion in ["LONG", "SHORT"]:
                     confianza = max(0.0, min(0.99, confianza + score_ajuste))

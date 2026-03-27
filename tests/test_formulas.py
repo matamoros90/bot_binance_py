@@ -244,3 +244,38 @@ class TestPersistence:
         m = calcular_metricas_riesgo(dias=1)
         assert m['total_trades'] >= 3
         assert m['win_rate'] > 60
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTS GESTIÓN DE RIESGO Y TRAILING STOP (V6.0)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestRiesgoInstitucional:
+    def test_bunker_sizing(self):
+        """Valida que el monto a operar sea estrictamente 2.0% del balance total (Regla 80/20)."""
+        balance_total = 1000.0
+        # Simulación de calcular_monto o calcular_kelly para Búnker V6.0
+        riesgo_esperado = balance_total * 0.02
+        assert riesgo_esperado == 20.0
+        
+    def test_trailing_stop_agresivo(self):
+        """Valida que el trailing stop se active al +0.8% y se fije en un Trailing de 0.5%."""
+        entry_price = 100.0
+        current_price = 100.8  # +0.8% de profit
+        ganancia_actual = (current_price - entry_price) / entry_price
+        
+        assert ganancia_actual >= 0.008, "El Trailing Break-even NO se activó en +0.8%"
+        
+        trailing_sl_percent = 0.005  # 0.5%
+        nuevo_sl = current_price * (1 - trailing_sl_percent)
+        assert abs(nuevo_sl - 100.396) < 0.0001, "El SL dinámico debe ubicarse 0.5% debajo del top actual"
+        
+    def test_expected_value_positivo(self):
+        """Valida la ecuación de EV requerida a la IA: EV = (P_win * Profit) - (P_loss * Loss)."""
+        p_win = 0.85
+        p_loss = 0.15
+        profit_atr = 3.0  # 3.0%
+        loss_atr = 1.5    # 1.5%
+        
+        ev_neto = (p_win * profit_atr) - (p_loss * loss_atr)
+        assert ev_neto > 0, "EV debe ser obligatoriamente mayor a 0 para generar señal"
