@@ -31,12 +31,12 @@ USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "ye
 BOT_VERSION = "V5.16 Elite (Bunker Edition)"
 CONFIANZA_MINIMA = 0.85   # V6.0: 85% mínimo (High Conviction Only)
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
-ESCUDO_SEGURO = 0.20      # 20% conceptual de reserva (no usado directamente en el sizing)
+ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
 APALANCAMIENTO = 3        # Apalancamiento conservador x3
 TOP_ACTIVOS = 30          # Activos a analizar por volumen (Aumentado para buscar más oportunidades)
-MAX_POSICIONES = 10       # Máximo 10 posiciones simultáneas (Aumentado para High Frequency Day Trading)
+MAX_POSICIONES = 2        # Máximo 2 posiciones simultáneas para evitar riesgo al 20% Búnker
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN
@@ -1641,6 +1641,12 @@ def ajustar_tp_dinamico(client):
                         _tp_dinamico_cooldown[symbol] = now + TP_DINAMICO_COOLDOWN
                         
                     except Exception as e:
+                        # V5.16 Elite Fix: Silenciar conflictos de órdenes closePosition (-4130 / -4045)
+                        error_str = str(e)
+                        if '-4045' in error_str or '-4130' in error_str:
+                            _tp_dinamico_cooldown[symbol] = now + TP_DINAMICO_COOLDOWN
+                            continue
+                            
                         # V5.11: Throttle error y aplicar cooldown para evitar spam
                         log_throttled(
                             f"tp_dinamico_error_{symbol}",
@@ -2486,9 +2492,9 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 
 💰 *BALANCE DETECTADO:*
 💵 USDT Disponible: `${saldo:.2f}`
-🛡️ Escudo 80/20 %
-👨🏻‍💻 Trabajo 80%
-🛟 Seguro 20%
+🛡️ Escudo Búnker
+👨🏻‍💻 Operativo: `{int(ESCUDO_TRABAJO * 100)}%`
+🛟 Protegido (Intocable): `{int(ESCUDO_SEGURO * 100)}%`
 
 ⚙️ *CONFIGURACIÓN:*
 🔧 Modo: `{'TESTNET' if USAR_TESTNET else 'PRODUCCIÓN'}`
@@ -2497,9 +2503,9 @@ def generar_reporte_inicio(saldo, status_gemini, fg_valor, fg_clasificacion):
 📈 Top activos: `{TOP_ACTIVOS}`
 📉 Max posiciones: `{MAX_POSICIONES}`
 
-🆕 *FUNCIONES V5.5:*
+🆕 *FUNCIONES V5.16 ELITE:*
 📊 **RESUMEN DIARIO:** Activado ✅
-📍 Trailing SL: `1.5% activo` ✅
+📍 Trailing SL: `{TRAILING_SL_PERCENT * 100:.1f}% activo` ✅
 ⏱️ Temporalidades: `{', '.join(TEMPORALIDADES)}`
 
 💸 *PROTECCIÓN FUNDING FEES:* 🟢 ACTIVA
