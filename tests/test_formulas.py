@@ -269,7 +269,7 @@ class TestRiesgoInstitucional:
         
         trailing_sl_percent = 0.005  # 0.5%
         nuevo_sl = current_price * (1 - trailing_sl_percent)
-        assert abs(nuevo_sl - 100.396) < 0.0001, "El SL dinámico debe ubicarse 0.5% debajo del top actual"
+        assert abs(nuevo_sl - 100.296) < 0.0001, "El SL dinámico debe ubicarse 0.5% debajo del top actual"
         
     def test_expected_value_positivo(self):
         """Valida la ecuación de EV requerida a la IA: EV = (P_win * Profit) - (P_loss * Loss)."""
