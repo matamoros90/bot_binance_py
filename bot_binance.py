@@ -720,9 +720,9 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
     atr_pct = float(ind_actual.get('atr_percent', 0))
     vol_rel = float(ind_actual.get('volumen_relativo', 1))
 
-    # Filtro estricto de liquidez (RV < 1.5x) para descartar activos muertos o sin volumen
-    if atr_pct < 0.05 or vol_rel < 1.5:
-        return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 1.5x o volatilidad nula"
+    # Filtro estricto de liquidez (RV < 0.2x) para descartar activos muertos o sin volumen
+    if atr_pct < 0.05 or vol_rel < 0.2:
+        return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 0.2x o volatilidad nula"
 
     # V5.16: Continuación firme (Rebote/Pullback normal)
     if 'BAJISTA' in t1:
@@ -2126,9 +2126,9 @@ def ejecutar_trading(client, gemini_client):
                 ema200 = float(ind_actual.get('ema200', 0)) if ind_actual.get('ema200') is not None else 0
                 
                 # V6.0: FILTRO INSTITUCIONAL DE LIQUIDEZ Y EMA200
-                if rv < 0.8:
+                if rv < 0.2:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.80x)")
+                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.20x)")
                     continue
                 
                 # Skip si RSI estrictamente neutral + tendencia lateral + rango medio apretado
