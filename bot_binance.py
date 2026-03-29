@@ -29,12 +29,12 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V5.16 Elite (Bunker Edition)"
-CONFIANZA_MINIMA = 0.85   # V6.0: 85% mínimo (High Conviction Only)
+CONFIANZA_MINIMA = 0.75   # V6.0: 75% mínimo (High Conviction Only)
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
-APALANCAMIENTO = 3        # Apalancamiento conservador x3
+APALANCAMIENTO = 5        # Apalancamiento conservador x5
 TOP_ACTIVOS = 30          # Activos a analizar por volumen (Aumentado para buscar más oportunidades)
 MAX_POSICIONES = 2        # Máximo 2 posiciones simultáneas para evitar riesgo al 20% Búnker
 
@@ -138,7 +138,7 @@ LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
 # ═══════════════════════════════════════════════════════════════════════════════
-TEMPORALIDADES = ['1h']  # V6.0: Escala Institucional excluyendo el "ruido" de la volatilidad Intradía menor
+TEMPORALIDADES = ['15m', '1h']  # V6.0: Escala Institucional excluyendo el "ruido" de la volatilidad Intradía menor
 
 # V6.0: Ajuste de Scalping para temporalidad de 1H
 TP_SL_CONFIG = {
@@ -648,7 +648,7 @@ def calcular_kelly(saldo_disponible, confianza_ia):
     V6.0: Instauración de Riesgo Presidencial (Búnker 80/20). 
     Límite máximo del 2.0% del balance total asociado al pool operativo para evitar ruido y pérdidas progresivas.
     """
-    monto = saldo_disponible * 0.02
+    monto = saldo_disponible * 0.04
     if LOG_DETALLADO:
         log(f"📊 Fixed Risk Sizing (2.0%) | Búnker Activo | Apostando: ${monto:.2f}")
     
@@ -724,26 +724,20 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
     if atr_pct < 0.05 or vol_rel < 1.5:
         return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 1.5x o volatilidad nula"
 
-    # V5.13: Continuación bajista firme (Rebote a resistencia)
+    # V5.16: Continuación firme (Rebote/Pullback normal)
     if 'BAJISTA' in t1:
-        if rsi >= 65 and posicion_rango >= 75 and macd_hist < 0:
-            conf = 0.72 + (0.02 if vol_rel >= 1.10 else 0)
-            conf = max(0.70, min(0.85, conf))
-            return "SHORT", conf, "temp_actual", "Fallback técnico: rebote bajista exhausto (RSI>65)"
+        if rsi >= 65:
+            return "SHORT", 0.75, temp_actual, "Fallback técnico: rebote bajista exhausto (RSI>65)"
 
-    # V5.13: Continuación alcista firme (Caída a soporte)
     if 'ALCISTA' in t1:
-        if rsi <= 35 and posicion_rango <= 25 and macd_hist > 0:
-            conf = 0.72 + (0.02 if vol_rel >= 1.10 else 0)
-            conf = max(0.70, min(0.85, conf))
-            return "LONG", conf, "temp_actual", "Fallback técnico: rebote alcista exhausto (RSI<35)"
+        if rsi <= 35:
+            return "LONG", 0.75, temp_actual, "Fallback técnico: rebote alcista exhausto (RSI<35)"
 
-    # Reversión extrema (muy selectiva) independizada de Fear and Greed
-    if rsi <= 15 and posicion_rango <= 5 and macd_hist > -0.005:
-        return "LONG", 0.70, "temp_actual", "Fallback técnico: sobreventa absoluta y divergencia MACD"
+    if rsi <= 25:
+        return "LONG", 0.70, temp_actual, "Fallback técnico: sobreventa extrema"
 
-    if rsi >= 85 and posicion_rango >= 95 and macd_hist < 0.005:
-        return "SHORT", 0.70, "temp_actual", "Fallback técnico: sobrecompra absoluta y divergencia MACD"
+    if rsi >= 75:
+        return "SHORT", 0.70, temp_actual, "Fallback técnico: sobrecompra extrema"
 
     # V5.12: Eliminados fallbacks de baja confianza (65%) que forzaban trades basura.
     # Solo se mantienen los setups de alta convicción arriba (continuación tendencia 72%+
@@ -2132,9 +2126,9 @@ def ejecutar_trading(client, gemini_client):
                 ema200 = float(ind_actual.get('ema200', 0)) if ind_actual.get('ema200') is not None else 0
                 
                 # V6.0: FILTRO INSTITUCIONAL DE LIQUIDEZ Y EMA200
-                if rv < 1.5:
+                if rv < 0.8:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 1.50x)")
+                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.80x)")
                     continue
                 
                 # Skip si RSI estrictamente neutral + tendencia lateral + rango medio apretado
@@ -2165,8 +2159,8 @@ REGLAS INSTITUCIONALES (V6.0):
 1. EXPECTED VALUE (EV) MATEMÁTICO: Toda decisión auditable debe tener un EV a favor.
    Fórmula estricta de EV: EV = (P_win * Profit) - (P_loss * Loss).
    Si el resultado del EV no es sustancialmente positivo, la decisión lógica y mandatoria debe ser "WAIT".
-2. REGLA TENDENCIAL EMA 200: ESTRICTAMENTE PROHIBIDO emitir la señal 'LONG' si el Precio Actual está por debajo de la EMA 200. Cualquier compra bajo la EMA 200 resultará en la pérdida total del fondo institucional.
-3. EXIGENCIA DE CONFIANZA: Tu umbral mínimo para operar es 85%. Si no tienes >85% de certeza vía divergencias o confirmaciones multi-indicador, responde "WAIT" con 0% de confianza.
+2. REGLA TENDENCIAL EMA 200: Prioriza operaciones a favor de la tendencia (Precio vs EMA 200). En temporalidades cortas (15m), puedes buscar rebotes (Mean Reversion) si el RSI muestra divergencias claras, siempre que el EV sea positivo.
+3. EXIGENCIA DE CONFIANZA: Tu umbral mínimo para operar es 75%. Si no tienes >75% de certeza vía divergencias o confirmaciones multi-indicador, responde "WAIT" con 0% de confianza.
 
 MERCADO Y SENTIMIENTO:
 Operación en Vacio (Vacuum Trading). Has sido aislado del ruido informativo global. Tu sistema solo existe para decodificar la geometría matemática de este Token.

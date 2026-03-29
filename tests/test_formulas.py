@@ -263,6 +263,7 @@ class TestRiesgoInstitucional:
         entry_price = 100.0
         current_price = 100.8  # +0.8% de profit
         ganancia_actual = (current_price - entry_price) / entry_price
+        ganancia_actual = round(ganancia_actual, 4)
         
         assert ganancia_actual >= 0.008, "El Trailing Break-even NO se activó en +0.8%"
         
