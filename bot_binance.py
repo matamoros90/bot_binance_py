@@ -1153,7 +1153,8 @@ def guardian_posiciones(client):
                         symbol=symbol,
                         side=side,
                         type='MARKET',
-                        quantity=abs(cantidad)
+                        quantity=abs(cantidad),
+                        reduceOnly='true'
                     )
                     
                     # V5.13 FIX: Limpiar caché manual después de cerrar a mercado para no desincronizar API
