@@ -36,7 +36,7 @@ TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
 APALANCAMIENTO = 5        # Apalancamiento conservador x5
 TOP_ACTIVOS = 30          # Activos a analizar por volumen (Aumentado para buscar más oportunidades)
-MAX_POSICIONES = 2        # Máximo 2 posiciones simultáneas para evitar riesgo al 20% Búnker
+MAX_POSICIONES = 5        # Máximo 5 posiciones simultáneas para aprovechar el mercado
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN
@@ -1132,50 +1132,11 @@ def guardian_posiciones(client):
                 pnl_porcentaje = 0
             
             # ═══════════════════════════════════════════════════════════════════
-            # MOTOR DE SCALPING - COBRO SEGURO POR ROI% (V5.11)
+            # MOTOR DE SCALPING DESACTIVADO (V5.16 Elite)
             # ═══════════════════════════════════════════════════════════════════
-            # V5.13: Target basado en 6.5% ROI sobre margen inicial (Para que no robe el TP Limit de 2%)
-            SCALPING_ROI_TARGET = 0.065  # 6.5% ROI sobre margen
-            margen_inicial = abs(cantidad) * entry_price / APALANCAMIENTO
-            scalping_target_usd = margen_inicial * SCALPING_ROI_TARGET
-            if unrealized_pnl >= scalping_target_usd:
-                side = 'SELL' if cantidad > 0 else 'BUY'
-                
-                log(f"⚡ SCALPING: {symbol} alcanzó ganancia rápida (${unrealized_pnl:.2f})")
-                log(f"⚡ CERRANDO POSICIÓN PARA ASEGURAR GANANCIA: {symbol}")
-                
-                try:
-                    # Cancelar todas las órdenes pendientes primero
-                    client.futures_cancel_all_open_orders(symbol=symbol)
-                    
-                    # V5.16 FIX: Cierre con LIMIT GTC para evitar error -4131 en MARKET
-                    info = obtener_exchange_info(client)
-                    symbol_info = next((s for s in info['symbols'] if s['symbol'] == symbol), None)
-                    price_precision = int(symbol_info['pricePrecision']) if symbol_info else 4
-                    
-                    # Colocar orden 1.5% "peor" al mark price para asegurar cruce rápido pero válido
-                    if side == 'SELL':
-                        precio_cierre = round(mark_price * 0.985, price_precision)
-                    else:
-                        precio_cierre = round(mark_price * 1.015, price_precision)
-                        
-                    client.futures_create_order(
-                        symbol=symbol,
-                        side=side,
-                        type='LIMIT',
-                        timeInForce='GTC',
-                        price=precio_cierre,
-                        quantity=abs(cantidad),
-                        reduceOnly='true'
-                    )
-                    
-                    # V5.13 FIX: Limpiar caché manual después de cerrar a mercado para no desincronizar API
-                    _positions_cache["ts"] = 0.0
-                    
-                    log(f"✅ Posición {symbol} cerrada por Scalping. PNL: ${unrealized_pnl:.2f}")
-                    continue  # Saltar el resto de comprobaciones para este símbolo
-                except Exception as e:
-                    log(f"❌ Error cerrando posición por Scalping {symbol}: {e}")
+            # Dejamos que el Trailing Stop y Take Profit dinámicos aseguren la ganancia 
+            # sin enviar órdenes al mercado que provoquen el error -4014 en Binance.
+            pass
 
             # ═══════════════════════════════════════════════════════════════════
             # CIERRE DE EMERGENCIA POR PÉRDIDA MÁXIMA (-10%)
