@@ -1148,11 +1148,23 @@ def guardian_posiciones(client):
                     # Cancelar todas las órdenes pendientes primero
                     client.futures_cancel_all_open_orders(symbol=symbol)
                     
-                    # Cerrar la posición a mercado
+                    # V5.16 FIX: Cierre con LIMIT GTC para evitar error -4131 en MARKET
+                    info = obtener_exchange_info(client)
+                    symbol_info = next((s for s in info['symbols'] if s['symbol'] == symbol), None)
+                    price_precision = int(symbol_info['pricePrecision']) if symbol_info else 4
+                    
+                    # Colocar orden 1.5% "peor" al mark price para asegurar cruce rápido pero válido
+                    if side == 'SELL':
+                        precio_cierre = round(mark_price * 0.985, price_precision)
+                    else:
+                        precio_cierre = round(mark_price * 1.015, price_precision)
+                        
                     client.futures_create_order(
                         symbol=symbol,
                         side=side,
-                        type='MARKET',
+                        type='LIMIT',
+                        timeInForce='GTC',
+                        price=precio_cierre,
                         quantity=abs(cantidad),
                         reduceOnly='true'
                     )
