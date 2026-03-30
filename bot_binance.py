@@ -709,7 +709,7 @@ def calcular_ev_neto(confianza, tp_pct, sl_pct, modo_mercado="TREND"):
     return ev_neto, p_win
 
 
-def generar_senal_fallback(ind_actual, posicion_rango, fg_valor):
+def generar_senal_fallback(ind_actual, posicion_rango, fg_valor, temp_actual="15m"):
     """Genera señal técnica de respaldo cuando la IA responde WAIT."""
     if not ind_actual:
         return None, 0.0, None, "Sin datos de indicadores"
@@ -2251,7 +2251,7 @@ Responde SOLO con este formato JSON perfecto:
                 # V5.5: Fallback técnico cuando IA se fuerza erróneamente en esperar o falla
                 if accion not in ["LONG", "SHORT"]:
                     accion_fb, conf_fb, temp_fb, razon_fb = generar_senal_fallback(
-                        ind_actual, posicion_rango, fg_valor
+                        ind_actual, posicion_rango, fg_valor, temp_actual
                     )
                     if accion_fb:
                         accion = accion_fb
