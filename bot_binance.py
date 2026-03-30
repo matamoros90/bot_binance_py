@@ -258,6 +258,26 @@ def servidor_salud():
                         self._send_json({"ok": False, "message": "Token vacío"}, 400)
                 except Exception as e:
                     self._send_json({"ok": False, "message": str(e)}, 500)
+            elif self.path == "/api/panic":
+                try:
+                    if client:
+                        positions = obtener_posiciones(client)
+                        cerradas = 0
+                        for pos in positions:
+                            cantidad = float(pos.get('positionAmt', 0))
+                            if cantidad != 0:
+                                symbol = pos['symbol']
+                                side = 'SELL' if cantidad > 0 else 'BUY'
+                                client.futures_cancel_all_open_orders(symbol=symbol)
+                                client.futures_create_order(symbol=symbol, side=side, type='MARKET', quantity=abs(cantidad), reduceOnly='true')
+                                cerradas += 1
+                        stats_diarias["drawdown_pausado"] = True # Pausar el bot hasta mañana
+                        log(f"🚨 BOTÓN DE PÁNICO ACTIVADO DESDE APP: {cerradas} posiciones cerradas. Bot pausado.")
+                        self._send_json({"ok": True, "message": f"Pánico activado. {cerradas} posiciones cerradas."})
+                    else:
+                        self._send_json({"ok": False, "message": "Binance client no inicializado"}, 500)
+                except Exception as e:
+                    self._send_json({"ok": False, "message": str(e)}, 500)
             else:
                 self._send_json({"error": "Not found"}, 404)
 
@@ -267,7 +287,22 @@ def servidor_salud():
             if path == "/api/status":
                 try:
                     fg_val, fg_label = obtener_fear_greed()
-                    pos = contar_posiciones_abiertas(client) if client else 0
+                    
+                    posiciones_activas = []
+                    if client:
+                        try:
+                            positions = obtener_posiciones(client)
+                            for p in positions:
+                                if float(p.get('positionAmt', 0)) != 0:
+                                    posiciones_activas.append({
+                                        "symbol": p['symbol'],
+                                        "side": "LONG" if float(p['positionAmt']) > 0 else "SHORT",
+                                        "pnl": round(float(p.get('unRealizedProfit', 0)), 2)
+                                    })
+                        except:
+                            pass
+                    
+                    pos = len(posiciones_activas)
                     bal = obtener_balance(client) if client else 0
                     puede = verificar_drawdown_diario(bal) if client else False
                     self._send_json({
@@ -279,6 +314,7 @@ def servidor_salud():
                         "fear_greed_label": fg_label,
                         "uptime_seconds": int(time.time() - _servidor_inicio),
                         "puede_operar": puede,
+                        "posiciones_detalle": posiciones_activas,
                         "timestamp": hora_local().isoformat(),
                     })
                 except Exception as e:
