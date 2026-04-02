@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from persistence import (
     inicializar_db, registrar_trade_abierto, registrar_trade_cerrado,
     registrar_decision, registrar_balance_diario, calcular_metricas_riesgo,
-    obtener_datos_kelly, generar_resumen_metricas
+    obtener_datos_kelly, generar_resumen_metricas, contar_trades_semana_actual
 )
 from indicators import (
     calcular_rsi, calcular_ema, calcular_macd, calcular_bollinger,
@@ -34,14 +34,14 @@ ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance est�
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 200      # Cantidad de velas a obtener
-APALANCAMIENTO = 5        # Apalancamiento conservador x5
+APALANCAMIENTO = 10       # Modo Sniper x10
 TOP_ACTIVOS = 30          # Activos a analizar por volumen (Aumentado para buscar más oportunidades)
 MAX_POSICIONES = 5        # Máximo 5 posiciones simultáneas para aprovechar el mercado
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
-TRAILING_SL_PERCENT = 0.005  # V6.0: 0.5% trailing agressivo para consolidar ROI diario rápidamente
+TRAILING_SL_PERCENT = 0.010  # Sniper Mode: 1% trailing stop agresivo para proteger ganancias grandes
 MONITOREO_INTERVALO = int(os.getenv("MONITOREO_INTERVALO", "30"))  # 30s default
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
@@ -142,7 +142,7 @@ TEMPORALIDADES = ['15m', '1h']  # V6.0: Escala Institucional excluyendo el "ruid
 
 # V6.0: Ajuste de Scalping para temporalidad de 1H
 TP_SL_CONFIG = {
-    "1h":  {"tp": 0.030, "sl": 0.015},    # V6.0: +3.0%, -1.5% (R:R 2:1)
+    "1h":  {"tp": 0.085, "sl": 0.035},    # Sniper Mode V6.0: +8.5%, -3.5%
 }
 
 # V6.0: Modo rango
@@ -682,11 +682,11 @@ def calcular_sl_atr(precio_actual, atr, side):
 def calcular_kelly(saldo_disponible, confianza_ia):
     """
     V6.0: Instauración de Riesgo Presidencial (Búnker 80/20). 
-    Límite máximo del 2.0% del balance total asociado al pool operativo para evitar ruido y pérdidas progresivas.
+    Límite máximo del 10.0% del balance total asociado al pool operativo para Sniper Mode.
     """
-    monto = saldo_disponible * 0.04
+    monto = saldo_disponible * 0.50
     if LOG_DETALLADO:
-        log(f"📊 Fixed Risk Sizing (2.0%) | Búnker Activo | Apostando: ${monto:.2f}")
+        log(f"📊 Fixed Risk Sizing (10.0%) | Búnker Activo | Apostando: ${monto:.2f}")
     
     return round(monto, 2)
 
@@ -718,10 +718,10 @@ def calcular_monto(saldo, confianza):
     
     - Bloquea el 80% del balance como capital intocable.
     - Usa el 20% como margen máximo operativo (ESCUDO_TRABAJO).
-    - Riesgo de operación fijado en 2.0% del balance total (para evitar rachas negativas).
+    - Riesgo de operación fijado en 10.0% del balance total (Sniper Mode).
     """
     saldo_disponible = saldo * ESCUDO_TRABAJO
-    porcentaje = 2.0  # 2% fijo por operación sobre el saldo TOTAL
+    porcentaje = 10.0  # 10% fijo por operación sobre el saldo TOTAL (Sniper Mode)
     monto = saldo * (porcentaje / 100.0)
 
     if LOG_DETALLADO:
@@ -2066,6 +2066,16 @@ def ejecutar_trading(client, gemini_client):
         if saldo_disponible <= reserva_obligatoria:
             log(f"🛡️ RESERVA DE CAPITAL INTACTA: Operaciones bloqueadas. Disp: ${saldo_disponible:.2f} <= Límite Intocable: ${reserva_obligatoria:.2f}")
             return
+            
+        # ═══════════════════════════════════════════════════════════════════
+        # HIBERNACIÓN SEMANAL (Sniper Mode)
+        # ═══════════════════════════════════════════════════════════════════
+        trades_semana = contar_trades_semana_actual()
+        if trades_semana >= 3:
+            log_throttled("hibernacion_semanal", f"💤 HIBERNACIÓN ACTIVA: Límite de {trades_semana}/3 trades semanales alcanzado. Modo Ahorro IA habilitado.", 300)
+            return
+        else:
+            log(f"🎯 Operaciones semana actual: {trades_semana}/3 permitidas (Sniper Mode).")
         
         # Verificar espacios disponibles
         pos_abiertas = contar_posiciones_abiertas(client)

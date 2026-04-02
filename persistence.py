@@ -159,6 +159,26 @@ def registrar_balance_diario(fecha, balance_inicio=None, balance_fin=None):
 # MÉTRICAS DE RIESGO
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def contar_trades_semana_actual():
+    """Cuenta cuántos trades se han abierto desde el lunes de la semana actual."""
+    conn = _get_conn()
+    c = conn.cursor()
+    
+    # Calcular el inicio de esta semana (lunes a las 00:00:00)
+    hoy = datetime.now()
+    inicio_semana = (hoy - timedelta(days=hoy.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    fecha_desde = inicio_semana.isoformat()
+    
+    c.execute("""
+        SELECT count(*) as total FROM trades 
+        WHERE timestamp >= ?
+    """, (fecha_desde,))
+    
+    row = c.fetchone()
+    conn.close()
+    
+    return row['total'] if row else 0
+
 def calcular_metricas_riesgo(dias=30):
     """Calcula Win Rate, Profit Factor, Sharpe Ratio, Max Drawdown."""
     conn = _get_conn()
