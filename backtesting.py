@@ -1,6 +1,7 @@
 """
-V5.3: Motor de Backtesting.
+V6.1: Motor de Backtesting Realista.
 Simula la estrategia del bot con datos históricos de Binance.
+Incluye fees y slippage reales para resultados más precisos.
 
 Uso:
     python backtesting.py                    # Últimos 30 días
@@ -25,6 +26,15 @@ from binance.client import Client
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ═══════════════════════════════════════════════════════════════
+# V6.1: COSTOS REALISTAS DE TRADING (Binance Futures)
+# ═══════════════════════════════════════════════════════════════
+# Fee de Binance Futures (maker + taker round-trip estimado).
+# Taker fee = 0.04% por lado × 2 = 0.08%. Añadimos 0.04% extra por margen.
+FEE = 0.0012       # 0.12% round-trip (entrada + salida) con fee taker
+# Slippage estimado por diferencia entre precio teórico y precio de ejecución real.
+SLIPPAGE = 0.0005  # 0.05% slippage promedio en Futures líquidos
 
 
 def conectar_binance():
@@ -135,7 +145,10 @@ def simular_estrategia(velas, config):
                     hit_sl = True
             
             if hit_sl:  # SL hit primero (peor caso)
-                pnl_pct = -abs(posicion_activa['entry'] - posicion_activa['sl']) / posicion_activa['entry'] * 100
+                pnl_pct_bruto = -abs(posicion_activa['entry'] - posicion_activa['sl']) / posicion_activa['entry'] * 100
+                # V6.1: Descontar fee round-trip + slippage de salida
+                costos_pct = (FEE + SLIPPAGE) * 100
+                pnl_pct = pnl_pct_bruto - costos_pct
                 trades.append({
                     'entry_time': posicion_activa['entry_time'],
                     'exit_time': vela['timestamp'],
@@ -148,7 +161,10 @@ def simular_estrategia(velas, config):
                 })
                 posicion_activa = None
             elif hit_tp:
-                pnl_pct = abs(posicion_activa['tp'] - posicion_activa['entry']) / posicion_activa['entry'] * 100
+                pnl_pct_bruto = abs(posicion_activa['tp'] - posicion_activa['entry']) / posicion_activa['entry'] * 100
+                # V6.1: Descontar fee round-trip + slippage de salida
+                costos_pct = (FEE + SLIPPAGE) * 100
+                pnl_pct = pnl_pct_bruto - costos_pct
                 trades.append({
                     'entry_time': posicion_activa['entry_time'],
                     'exit_time': vela['timestamp'],
@@ -227,15 +243,19 @@ def simular_estrategia(velas, config):
             sl_distance = precio_actual * sl_pct
         
         if accion == 'LONG':
-            tp_price = precio_actual * (1 + tp_pct)
-            sl_price = precio_actual - sl_distance
+            # V6.1: Aplicar slippage de entrada (precio real = precio_actual + slippage)
+            precio_entrada = precio_actual * (1 + SLIPPAGE)
+            tp_price = precio_entrada * (1 + tp_pct)
+            sl_price = precio_entrada - sl_distance
         else:
-            tp_price = precio_actual * (1 - tp_pct)
-            sl_price = precio_actual + sl_distance
+            # V6.1: Aplicar slippage de entrada para SHORT (ejecución a precio menor)
+            precio_entrada = precio_actual * (1 - SLIPPAGE)
+            tp_price = precio_entrada * (1 - tp_pct)
+            sl_price = precio_entrada + sl_distance
         
         posicion_activa = {
             'side': accion,
-            'entry': precio_actual,
+            'entry': precio_entrada,  # V6.1: precio con slippage aplicado
             'tp': tp_price,
             'sl': sl_price,
             'entry_time': velas[i]['timestamp'],
@@ -246,11 +266,12 @@ def simular_estrategia(velas, config):
 
 
 def generar_reporte(trades, symbol, dias):
-    """Genera un reporte formateado de los resultados del backtesting."""
+    """V6.1: Genera un reporte formateado incluyendo costos reales de fees y slippage."""
     
     print(f"\n{'='*60}")
-    print(f"📊 REPORTE BACKTESTING — {symbol}")
+    print(f"📊 REPORTE BACKTESTING V6.1 (Fees+Slippage) — {symbol}")
     print(f"📅 Período: últimos {dias} días")
+    print(f"💸 Fee Round-Trip: {FEE*100:.2f}% | Slippage: {SLIPPAGE*100:.3f}%")
     print(f"{'='*60}")
     
     if not trades:

@@ -1,6 +1,6 @@
-# 🤖 BOT BINANCE FUTURES - GEMINI 2.5 FLASH
-# Trading 24/7 de Criptomonedas con IA
-# V5.3 - Multi-Timeframe + Prompt Enriquecido + SQLite + Métricas de Riesgo
+# 🤖 BOT BINANCE FUTURES - GEMINI IA FILTER EDITION
+# Trading 24/7 de Criptomonedas con IA como Filtro Validador
+# V6.1 - IA como FILTRO + 2% Riesgo Fijo + EV Mínimo + Compatibilidad VPS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from binance.client import Client
@@ -13,8 +13,10 @@ from zoneinfo import ZoneInfo
 from persistence import (
     inicializar_db, registrar_trade_abierto, registrar_trade_cerrado,
     registrar_decision, registrar_balance_diario, calcular_metricas_riesgo,
-    obtener_datos_kelly, generar_resumen_metricas, contar_trades_semana_actual
+    obtener_datos_kelly, generar_resumen_metricas, contar_trades_semana_actual,
+    guardar_metricas_ia,       # V6.2: snapshot + alertas IA
 )
+from capital_manager import CapitalManager  # V6.2: gestión dinámica de capital
 from indicators import (
     calcular_rsi, calcular_ema, calcular_macd, calcular_bollinger,
     calcular_atr, calcular_volumen_relativo, detectar_soportes_resistencias,
@@ -28,7 +30,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V5.16 Elite (Bunker Edition)"
+BOT_VERSION = "V6.1 Elite (IA-Filter Edition)"
 CONFIANZA_MINIMA = 0.75   # V6.0: 75% mínimo (High Conviction Only)
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
@@ -46,11 +48,12 @@ MONITOREO_INTERVALO = int(os.getenv("MONITOREO_INTERVALO", "30"))  # 30s default
 LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
 
 # Scheduler de tareas para controlar carga de CPU/API
-INTERVALO_GUARDIAN = 30
-INTERVALO_VERIFICAR_SL = 120
-INTERVALO_TRAILING = 30
-INTERVALO_TRADES_CERRADOS = 120
-INTERVALO_RESUMEN_POSICIONES = 300
+INTERVALO_GUARDIAN             = 30
+INTERVALO_VERIFICAR_SL         = 120
+INTERVALO_TRAILING             = 30
+INTERVALO_TRADES_CERRADOS      = 120
+INTERVALO_RESUMEN_POSICIONES   = 300
+INTERVALO_METRICAS_IA         = 1800   # V6.2: snapshot intraday cada 30 min
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ESTADÍSTICAS SEMANALES (V3.0) - Resumen cada viernes a las 18:00
@@ -75,6 +78,22 @@ stats_semanales = {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CIRCUIT BREAKER DE LA IA (V6.1)
+# Si hay más de IA_MAX_FALLOS consecutivos, USAR_IA se desactiva temporalmente.
+# Se reactiva automáticamente al ciclo siguiente si no hay más errores.
+# ═══════════════════════════════════════════════════════════════════════════════
+IA_MAX_FALLOS = 5                   # Umbral de fallos consecutivos antes de desactivar IA
+_ia_fallos_consecutivos = 0         # Contador global de fallos consecutivos del filtro IA
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MÉTRICAS DE SESIÓN — APROBACIÓN IA (V6.1)
+# Acumuladores globales de señales durante toda la vida del proceso.
+# Se incrementan en ejecutar_trading() y se muestran en logs y Telegram.
+# ═══════════════════════════════════════════════════════════════════════════════
+_ia_senales_total     = 0           # Señales técnicas generadas que llegaron al filtro IA
+_ia_senales_validadas = 0           # Señales aprobadas por Gemini ("VALIDAR")
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GESTIÓN DE RIESGO AVANZADA V3.0
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -96,17 +115,14 @@ ATR_SL_ACTIVO = False               # V5.0: DESACTIVADO - ATR SL causaba inconsi
 ATR_SL_MULTIPLICADOR = 2.0          # SL = Precio - (2.0 * ATR) - No usado si ATR_SL_ACTIVO=False
 ATR_SL_MINIMO_PERCENT = 0.015       # No usado si ATR_SL_ACTIVO=False
 
-# --- KELLY CRITERION PARA POSITION SIZING ---
-# Fórmula de Kelly: f* = (p * b - q) / b
-#   p = probabilidad de ganar (win-rate)
-#   q = probabilidad de perder (1 - p)
-#   b = ratio ganancia/pérdida promedio
-# El resultado es el % óptimo del capital a arriesgar
-# Usamos "medio Kelly" (50% del resultado) para ser más conservadores
-KELLY_ACTIVO = True                 # V5.8: REACTIVADO - Usamos Kelly para gestionar riesgo en lugar del IA Constraint
-KELLY_FRACCION = 0.5                # Usar 50% del Kelly (más conservador)
-KELLY_MINIMO = 0.02                 # Mínimo 2% del capital
-KELLY_MAXIMO = 0.10                 # Máximo 10% del capital
+# --- GESTIÓN DE RIESGO SIMPLIFICADA (V6.1) ---
+# V6.1: Eliminado Kelly Criterion por inconsistencia en datos tempranos.
+# Reemplazado por porcentaje FIJO del 2% por operación.
+# Esto es más robusto, predecible y alineado con buenas prácticas institucionales.
+KELLY_ACTIVO = False                # V6.1: DESACTIVADO - Reemplazado por 2% fijo
+KELLY_FRACCION = 0.5                # No usado (mantenido por compatibilidad)
+KELLY_MINIMO = 0.02                 # No usado
+KELLY_MAXIMO = 0.10                 # No usado
 
 # Estadísticas diarias para drawdown y Kelly
 # Se resetean cada día a las 00:00
@@ -151,10 +167,18 @@ TP_SL_RANGO_CONFIG = {
 }
 FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
 
-# V5.4: Filtro financiero mínimo por operación (EV neto)
-FEE_ROUNDTRIP_EST = 0.0012        # 0.12% estimado ida+vuelta
+# V6.1: Filtro financiero mínimo por operación (EV neto) — ACTIVADO
+FEE_ROUNDTRIP_EST = 0.0012        # 0.12% estimado ida+vuelta Binance Futures
 SLIPPAGE_EST = 0.0006             # 0.06% slippage conservador
-EV_MINIMO = 0.0                   # Desactivado: solo se usa EV como informacion, no como filtro duro
+EV_MINIMO = 0.002                 # V6.1: ACTIVADO — EV mínimo 0.2% para ejecutar trade
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONFIGURACIÓN IA MODO FILTRO (V6.1) — CRÍTICO
+# ═══════════════════════════════════════════════════════════════════════════════
+# La IA ya NO genera señales (LONG/SHORT). Solo VALIDA o RECHAZA señales técnicas.
+# El generador de señales es exclusivamente el fallback técnico (generar_senal_fallback).
+USAR_IA = True      # True = usar Gemini como filtro. False = ejecutar señal técnica directamente
+IA_MODO = "FILTRO"  # "FILTRO" = Gemini valida señales técnicas. NO cambiar a otro valor.
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FEAR & GREED INDEX
@@ -681,14 +705,10 @@ def calcular_sl_atr(precio_actual, atr, side):
 
 def calcular_kelly(saldo_disponible, confianza_ia):
     """
-    V6.0: Instauración de Riesgo Presidencial (Búnker 80/20). 
-    Límite máximo del 10.0% del balance total asociado al pool operativo para Sniper Mode.
+    V6.1: DEPRECADO — mantenido por compatibilidad.
+    Usar calcular_monto() en su lugar.
     """
-    monto = saldo_disponible * 0.50
-    if LOG_DETALLADO:
-        log(f"📊 Fixed Risk Sizing (10.0%) | Búnker Activo | Apostando: ${monto:.2f}")
-    
-    return round(monto, 2)
+    return calcular_monto(saldo_disponible)
 
 
 def actualizar_stats_trade(pnl):
@@ -713,20 +733,22 @@ def actualizar_stats_trade(pnl):
 # ═══════════════════════════════════════════════════════════════════════════════
 # CÁLCULO DE MONTO SIMPLE - 5% FIJO DEL BALANCE
 # ═══════════════════════════════════════════════════════════════════════════════
-def calcular_monto(saldo, confianza):
-    """Calcula un monto fijo bajo el marco Búnker (Reserva de Seguridad).
-    
-    - Bloquea el 80% del balance como capital intocable.
-    - Usa el 20% como margen máximo operativo (ESCUDO_TRABAJO).
-    - Riesgo de operación fijado en 10.0% del balance total (Sniper Mode).
+def calcular_monto(saldo, confianza=None):
+    """V6.2: Sizing dinámico — usa capital gestionado por CapitalManager si está disponible.
+
+    Si el CapitalManager está inicializado (cm no es None), usa su capital operativo
+    en lugar del saldo crudo del exchange. Esto permite que el escalado y la protección
+    por drawdown afecten el tamaño real de las posiciones.
+
+    En cualquier caso aplica 2% fijo de riesgo por operación.
     """
-    saldo_disponible = saldo * ESCUDO_TRABAJO
-    porcentaje = 10.0  # 10% fijo por operación sobre el saldo TOTAL (Sniper Mode)
-    monto = saldo * (porcentaje / 100.0)
+    # Usar capital gestionado si el CapitalManager está activo
+    capital_base = cm.get_capital_operativo() if (cm is not None) else saldo
+    monto = capital_base * 0.02  # 2% fijo
 
     if LOG_DETALLADO:
-        log(f"   🛡️ BÚNKER ALERTA: Saldo Total ${saldo:.2f} | Margen Disponible ${saldo_disponible:.2f}")
-        log(f"   💰 Notional Operativo: {porcentaje:.1f}% del balance total | ${monto:.2f}")
+        origen = "CapMgr" if cm is not None else "exchange"
+        log(f"   💰 Riesgo 2% [{origen}]: Base ${capital_base:.2f} → Monto ${monto:.2f}")
 
     return max(1, round(monto, 2))
 
@@ -780,6 +802,137 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor, temp_actual="15
     # y reversión extrema 70%).
 
     return None, 0.0, None, "Sin setup fallback de alta convicción"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EVALUADOR IA COMO FILTRO (V6.1) — CRÍTICO
+# ═══════════════════════════════════════════════════════════════════════════════
+def evaluar_con_ia(gemini_client, contexto: dict) -> str:
+    """
+    V6.1: Usa Gemini como FILTRO de calidad para señales técnicas.
+    
+    La IA NO genera señales. Solo responde "VALIDAR" o "RECHAZAR".
+    Si la respuesta es inválida, ambigua o hay error → retorna "RECHAZAR" (seguro por defecto).
+    
+    Parámetros:
+        gemini_client: Cliente de la API de Gemini
+        contexto: dict con las claves:
+            - precio_actual: float
+            - rsi: float
+            - tendencia_ema: str (ej: "ALCISTA_FUERTE")
+            - volumen_relativo: float
+            - atr_percent: float
+            - accion: str ("LONG" o "SHORT")
+            - symbol: str
+    
+    Retorna:
+        "VALIDAR" si la IA aprueba la señal técnica
+        "RECHAZAR" en cualquier otro caso (señal dudosa, error, respuesta inválida)
+    """
+    global _ia_fallos_consecutivos, USAR_IA
+
+    if not gemini_client:
+        log("   ⚠️ [IA-FILTRO] Gemini no disponible → RECHAZAR por defecto")
+        return "RECHAZAR"
+
+    accion  = contexto.get("accion", "???")
+    symbol  = contexto.get("symbol", "???")
+    precio  = contexto.get("precio_actual", 0)
+    rsi     = contexto.get("rsi", 50)
+    tendencia = contexto.get("tendencia_ema", "LATERAL")
+    vol_rel = contexto.get("volumen_relativo", 1.0)
+    atr_pct = contexto.get("atr_percent", 0)
+
+    prompt = f"""Eres un analista cuantitativo profesional especializado en trading.
+
+Tu tarea es evaluar si una señal técnica ya detectada debe ser VALIDADA o RECHAZADA.
+
+NO debes crear señales nuevas.
+NO debes recomendar comprar o vender directamente.
+SOLO debes decidir si la señal ya existente es de alta calidad.
+
+Analiza el siguiente contexto:
+
+- Precio actual: ${precio}
+- RSI: {rsi:.1f}
+- Tendencia: {tendencia}
+- EMA20: {contexto.get('ema20', 'N/A')}
+- EMA50: {contexto.get('ema50', 'N/A')}
+- Volumen relativo: {vol_rel:.2f}x
+- ATR (volatilidad): {atr_pct:.2f}%
+
+Reglas:
+
+- Si el mercado está lateral o sin claridad → RECHAZAR
+- Si la señal es débil o contradictoria → RECHAZAR
+- Solo VALIDAR si hay confluencia clara (tendencia + momentum + volumen)
+
+Responde ÚNICAMENTE en JSON válido con este formato:
+
+{{
+  "decision": "VALIDAR" o "RECHAZAR"
+}}
+
+NO agregues explicaciones.
+NO agregues texto extra.
+NO cambies el formato."""
+
+    MAX_RETRIES = 2
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=prompt
+            )
+            respuesta_raw = (response.text or "").strip()
+
+            # Limpiar markdown si existe
+            respuesta_limpia = respuesta_raw.replace("```json", "").replace("```", "").strip()
+
+            # Parsear JSON
+            try:
+                data = json.loads(respuesta_limpia)
+                decision = str(data.get("decision", "")).upper().strip()
+
+                if decision in ("VALIDAR", "RECHAZAR"):
+                    # ✔ Respuesta válida — resetear contador de fallos
+                    if _ia_fallos_consecutivos > 0:
+                        log(f"   ✅ [IA-CIRCUITO] Respuesta válida recibida. Fallos consecutivos reseteados ({_ia_fallos_consecutivos} → 0).")
+                    _ia_fallos_consecutivos = 0
+                    log(f"   🤖 [IA-FILTRO] {symbol} {accion} → {decision}")
+                    return decision
+
+                else:
+                    # Respuesta desconocida = fallo
+                    _ia_fallos_consecutivos += 1
+                    log(f"   ⚠️ [IA-FILTRO] Respuesta desconocida '{decision}' → RECHAZAR (fallos: {_ia_fallos_consecutivos})")
+
+            except (json.JSONDecodeError, AttributeError, KeyError):
+                # JSON inválido = fallo
+                _ia_fallos_consecutivos += 1
+                log(f"   ⚠️ [IA-FILTRO] JSON inválido → RECHAZAR (fallos: {_ia_fallos_consecutivos}, raw: {respuesta_raw[:60]})")
+
+        except Exception as api_error:
+            error_str = str(api_error)
+            if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(10)
+                    continue
+            # Error de API = fallo
+            _ia_fallos_consecutivos += 1
+            log(f"   ⚠️ [IA-FILTRO] Error API: {api_error} → RECHAZAR (fallos: {_ia_fallos_consecutivos})")
+
+    # — Verificar umbral de circuit breaker —
+    if _ia_fallos_consecutivos >= IA_MAX_FALLOS:
+        USAR_IA = False
+        log(
+            f"\n🔴 [IA-CIRCUIT-BREAKER] ALERTA CRÍTICA: {_ia_fallos_consecutivos} fallos consecutivos del filtro IA.\n"
+            f"   🚫 USAR_IA desactivado temporalmente para proteger el capital.\n"
+            f"   🔄 Se reactivará automáticamente cuando la API de Gemini responda correctamente.\n"
+            f"   📊 Umbral configurado: IA_MAX_FALLOS = {IA_MAX_FALLOS}"
+        )
+
+    return "RECHAZAR"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONEXIÓN A BINANCE
@@ -1862,7 +2015,31 @@ def verificar_posiciones_cerradas(client):
             except Exception as db_err:
                 if LOG_DETALLADO:
                     log(f"⚠️ Error registrando cierre en DB: {db_err}")
-            
+
+            # V6.2: Actualizar CapitalManager con PnL del trade cerrado
+            if cm is not None:
+                try:
+                    metricas_actuales = calcular_metricas_riesgo(dias=30)
+                    eventos = cm.actualizar(pnl, metricas_actuales, log_fn=log)
+                    log(f"   💼 [CapMgr] {cm.resumen_estado()}")
+
+                    # Si el drawdown activó pausa, loggear alerta adicional
+                    if eventos["reduccion"]:
+                        enviar_telegram(
+                            f"🔴 *ALERTA CAPITAL — REDUCCIÓN POR DRAWDOWN*\n"
+                            f"{eventos['alerta_log']}\n\n"
+                            f"{cm.resumen_telegram()}"
+                        )
+                    elif eventos["escalado"]:
+                        enviar_telegram(
+                            f"📈 *CAPITAL ESCALADO AUTOMÁTICAMENTE*\n"
+                            f"{eventos['alerta_log']}\n\n"
+                            f"{cm.resumen_telegram()}"
+                        )
+                except Exception as cm_err:
+                    if LOG_DETALLADO:
+                        log(f"⚠️ [CapMgr] Error actualizando capital: {cm_err}")
+
             # V3.0: NO SE ENVÍA TELEGRAM INDIVIDUAL
             # Todas las estadísticas se incluyen en el resumen semanal del viernes
             
@@ -1914,18 +2091,37 @@ def enviar_resumen_diario(client):
         # Registrar balance fin de día
         registrar_balance_diario(hora_local().strftime("%Y-%m-%d"), balance_fin=balance)
         
-        # Obtener métricas
-        metricas_texto = generar_resumen_metricas()
+        # V6.2: Persistir snapshot de métricas IA + evaluar alertas
+        alerta_tg = None
+        try:
+            resultado_ia = guardar_metricas_ia(_ia_senales_total, _ia_senales_validadas)
+            alerta_tg = resultado_ia.get('alerta_tg')
+            if resultado_ia.get('alerta_log'):
+                log(resultado_ia['alerta_log'])   # ← aparece en logs del bot
+        except Exception as e:
+            log(f"⚠️ No se pudo guardar métricas IA: {e}")
+
+        # Obtener métricas (con alerta_tg integrada si existe)
+        metricas_texto = generar_resumen_metricas(
+            ia_senales_total=_ia_senales_total,
+            ia_senales_validadas=_ia_senales_validadas,
+            alerta_tg=alerta_tg
+        )
         
         pnl_dia = stats_diarias.get('pnl_dia', 0)
         emoji_dia = "📈" if pnl_dia >= 0 else "📉"
-        
+
+        # V6.2: Bloque de gestión de capital para Telegram
+        bloque_capital = cm.resumen_telegram() if cm is not None else ""
+
         mensaje = f"""📊 *RESUMEN DIARIO {BOT_VERSION}*
 📅 {fecha}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 💵 *Balance:* `${balance:.2f}`
 {emoji_dia} *PNL Hoy:* `${pnl_dia:+.2f}`
+
+{bloque_capital}
 
 {metricas_texto}
 
@@ -2046,6 +2242,7 @@ def enviar_resumen_semanal(client):
 # MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 Pure Price Action)
 # ═══════════════════════════════════════════════════════════════════════════════
 def ejecutar_trading(client, gemini_client):
+    global _ia_senales_total, _ia_senales_validadas  # V6.1: métricas de aprobación IA
     log("\n" + "="*60)
     log("🧠 GEMINI 2.0 (Price Action Mode): Iniciando ciclo de análisis...")
     log("="*60)
@@ -2059,6 +2256,11 @@ def ejecutar_trading(client, gemini_client):
             return
             
         log(f"💰 Balance total: ${saldo_total:.2f} USDT | Disponible (Margen Libre): ${saldo_disponible:.2f}")
+        
+        # V6.2: Verificación de Cooldown Global del Capital Manager (post-drawdown)
+        if cm is not None and not cm.puede_operar():
+            log_throttled("cooldown_capital", "⏳ COOLDOWN ACTIVO: Trading bloqueado para proteger capital tras reducción por Drawdown.", 300)
+            return
         
         # V6.0: Reserva Institucional del 20%
         # Prohibición de apalancar si más del 80% de la equidad total está cautiva
@@ -2158,211 +2360,97 @@ def ejecutar_trading(client, gemini_client):
                     continue
                 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.3: PREPARAR LAS 200 VELAS CRUDAS para cotejo completo
-                # Gemini puede cotejar patrones en las velas vs los indicadores.
-                # Para el modelo usamos solo las últimas ~120 velas para no saturar el prompt.
-                velas_prompt = velas_actual[-120:] if len(velas_actual) > 120 else velas_actual
-                velas_csv_lines = []
-                for v in velas_prompt:
-                    velas_csv_lines.append(
-                        f"{v['open']:.6f},{v['high']:.6f},{v['low']:.6f},{v['close']:.6f},{v['volume']:.0f}"
-                    )
-                velas_csv = "\n".join(velas_csv_lines)
-                
+                # V6.1: GENERADOR DE SEÑALES — SOLO FALLBACK TÉCNICO
+                # La IA NO genera señales. Primero obtenemos señal técnica.
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.9: PROMPT ENRIQUECIDO SCALPING INSTITUCIONAL
-                # ═══════════════════════════════════════════════════════════════════
-                
-                prompt = f"""Eres un Analista Cuantitativo Institucional operando en la temporalidad de {temp_actual}. Tu misión primaria NO es operar frecuentemente, sino proteger el capital y buscar setups con Esperanza Matemática (EV) estrictamente positiva.
+                accion, confianza, temporalidad, razon = generar_senal_fallback(
+                    ind_actual, posicion_rango, fg_valor, temp_actual
+                )
 
-REGLAS INSTITUCIONALES (V6.0):
-1. EXPECTED VALUE (EV) MATEMÁTICO: Toda decisión auditable debe tener un EV a favor.
-   Fórmula estricta de EV: EV = (P_win * Profit) - (P_loss * Loss).
-   Si el resultado del EV no es sustancialmente positivo, la decisión lógica y mandatoria debe ser "WAIT".
-2. REGLA TENDENCIAL EMA 200: Prioriza operaciones a favor de la tendencia (Precio vs EMA 200). En temporalidades cortas (15m), puedes buscar rebotes (Mean Reversion) si el RSI muestra divergencias claras, siempre que el EV sea positivo.
-3. EXIGENCIA DE CONFIANZA: Tu umbral mínimo para operar es 75%. Si no tienes >75% de certeza vía divergencias o confirmaciones multi-indicador, responde "WAIT" con 0% de confianza.
-
-MERCADO Y SENTIMIENTO:
-Operación en Vacio (Vacuum Trading). Has sido aislado del ruido informativo global. Tu sistema solo existe para decodificar la geometría matemática de este Token.
-
-══════════════════════════════════
-ANÁLISIS COMPLETO DE {symbol}
-══════════════════════════════════
-
-TEMPORALIDAD {temp_actual} (200 velas)
-══════════════════════════════════
-- Precio actual: ${precio_actual}
-- RSI(14): {ind_actual['rsi']:.1f}
-- Tendencia EMA: {ind_actual['tendencia_ema']} (EMA20: ${ind_actual['ema20']}, EMA50: ${ind_actual['ema50']}, EMA200: ${ind_actual.get('ema200', 'N/A')})
-- MACD: {ind_actual['macd']['macd']:.6f} | Signal: {ind_actual['macd']['signal']:.6f} | Histograma: {ind_actual['macd']['histograma']:.6f}
-- Bollinger: Sup ${ind_actual['bollinger']['superior']} | Med ${ind_actual['bollinger']['media']} | Inf ${ind_actual['bollinger']['inferior']} | Pos: {ind_actual['bollinger']['posicion']}%
-- ATR(14): ${ind_actual['atr']:.6f} ({ind_actual['atr_percent']:.2f}%)
-- Volumen relativo: {ind_actual['volumen_relativo']}x
-- Soporte: ${ind_actual['soporte']} ({ind_actual['dist_soporte']:.2f}%) | Resistencia: ${ind_actual['resistencia']} ({ind_actual['dist_resistencia']:.2f}%)
-- Volatilidad: {volatilidad:.2f}% | Pos en rango: {posicion_rango:.1f}%
-
-══════════════════════════════════
-LAS 120 VELAS {temp_actual} MÁS RECENTES (open,high,low,close,volume)
-Analiza patrones: dojis, envolventes, doble techo/suelo, divergencias RSI.
-Úsalas para confirmar o invalidar la lectura de los indicadores anteriores.
-══════════════════════════════════
-{velas_csv}
-
-CRITERIOS DE ENTRADA V6.0:
-1. No persigas precios ni operes de forma impulsiva. Entra únicamente en Pullbacks a medias móviles (EMA20/EMA50) o rupturas confirmadas con alto ATR.
-2. Si el RSI está en rango medio (45-55) y sin divergencias claras de agotamiento, la única respuesta lógica y matemática es WAIT.
-3. Tendencia ALCISTA (precio sobre EMA200): prioriza LONG; permite SHORT únicamente si ves divergencia bajista MASIVA con RSI en sobrecompra extrema (>75).
-4. Tendencia BAJISTA (precio bajo EMA200): prioriza SHORT; PROHIBIDÍSIMO ENTRAR EN LONG.
-5. El ruido macroecosistémico no existe. El Price Action limpio es tu única verdad absoluta.
-
-Responde SOLO con este formato JSON perfecto:
-{{"ACCION": "LONG/SHORT/WAIT", "CONFIANZA": 0.90, "TEMPORALIDAD": "{temp_actual}", "RAZON": "Explicación breve del Setup y del EV Positivo detectado"}}"""
-                
-                # V3.7: Retry logic con exponential backoff para errores 429
-                MAX_RETRIES = 3
-                respuesta = None
-                for attempt in range(MAX_RETRIES):
-                    try:
-                        response = gemini_client.models.generate_content(
-                            model='gemini-2.0-flash',
-                            contents=prompt
-                        )
-                        respuesta = response.text
-                        break
-                    except Exception as api_error:
-                        error_str = str(api_error)
-                        if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
-                            if attempt < MAX_RETRIES - 1:
-                                wait_time = 15 * (attempt + 1)
-                                log(f"   ⏳ API limit alcanzado, esperando {wait_time}s...")
-                                time.sleep(wait_time)
-                                continue
-                        raise api_error
-                
-                if not respuesta:
-                    log(f"   ⚠️ No se pudo obtener respuesta de Gemini para {symbol}")
+                if not accion:
+                    if LOG_DETALLADO:
+                        log(f"   ⏭️ {symbol}: Sin setup técnico de alta convicción")
                     continue
-                
-                # V3.8: Validación robusta de JSON
-                try:
-                    respuesta_limpia = respuesta.replace("```json","").replace("```","").strip()
-                    data = json.loads(respuesta_limpia)
-                    
-                    if "ACCION" not in data or "CONFIANZA" not in data:
-                        log(f"   ⚠️ Respuesta IA incompleta, saltando {symbol}")
-                        continue
-                        
-                except json.JSONDecodeError as e:
-                    log(f"   ⚠️ JSON inválido de IA para {symbol}, saltando")
-                    continue
-                
-                accion = str(data.get('ACCION', 'WAIT')).upper()
-                confianza = float(data.get('CONFIANZA', 0))
-                temporalidad = data.get('TEMPORALIDAD', temp_actual)
-                razon = data.get('RAZON', 'Sin razón')
 
-                if confianza > 1:
-                    confianza = confianza / 100
-                confianza = max(0.0, min(0.99, confianza))
+                log(f"   📊 Señal técnica: {accion} ({int(confianza*100)}%) | {temp_actual}")
+                log(f"   💭 {razon[:80]}")
 
-                if temporalidad not in TEMPORALIDADES:
-                    temporalidad = temp_actual
-
-                # V5.5: Fallback técnico cuando IA se fuerza erróneamente en esperar o falla
-                if accion not in ["LONG", "SHORT"]:
-                    accion_fb, conf_fb, temp_fb, razon_fb = generar_senal_fallback(
-                        ind_actual, posicion_rango, fg_valor, temp_actual
-                    )
-                    if accion_fb:
-                        accion = accion_fb
-                        confianza = max(confianza, conf_fb)
-                        if temp_fb:
-                            temporalidad = temp_fb
-                        razon = f"{razon_fb}. IA original: WAIT."
-                        log(f"   🔁 Fallback activado: {accion} ({int(confianza*100)}%)")
+                # V6.1: Contar señal técnica generada (antes del filtro IA)
+                _ia_senales_total += 1
 
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.5: VALIDACIÓN POST-IA con score (evita bloqueo total)
+                # V6.1: DETERMINAR MODO MERCADO (para TP/SL y posicionamiento)
                 # ═══════════════════════════════════════════════════════════════════
                 tendencia_ema = (ind_actual.get('tendencia_ema', '') or '').upper()
-                rsi_actual = ind_actual.get('rsi', 50)
                 atr_pct_actual = ind_actual.get('atr_percent', 0)
                 boll_ancho_actual = (ind_actual.get('bollinger') or {}).get('ancho', 0)
                 modo_mercado = "RANGE" if ('LATERAL' in tendencia_ema and atr_pct_actual < 1.2 and boll_ancho_actual < 8) else "TREND"
 
-                score_ajuste = 0.0
-                reglas_aplicadas = []
-
-                # Macro Scoring (V5.14: DESACTIVADO para Scalping 100% Técnico)
-
-                # Alineación/contradicción con tendencia principal de scalping
-                if accion == "LONG" and 'BAJISTA' in tendencia_ema:
-                    if modo_mercado == "RANGE" and rsi_actual <= 25 and posicion_rango <= 20:
-                        score_ajuste -= 0.02
-                        reglas_aplicadas.append("LONG contra tendencia en rango")
-                    else:
-                        score_ajuste -= 0.15
-                        reglas_aplicadas.append("LONG contra tendencia EMA (-15%)")
-                elif accion == "SHORT" and 'ALCISTA' in tendencia_ema:
-                    if modo_mercado == "RANGE" and rsi_actual >= 75 and posicion_rango >= 80:
-                        score_ajuste -= 0.02
-                        reglas_aplicadas.append("SHORT contra tendencia en rango")
-                    else:
-                        score_ajuste -= 0.15
-                        reglas_aplicadas.append("SHORT contra tendencia EMA (-15%)")
-                elif accion in ["LONG", "SHORT"]:
-                    score_ajuste += 0.10
-                    reglas_aplicadas.append("Dirección alineada con tendencia Scalping (+10%)")
-
                 # ═══════════════════════════════════════════════════════════════════
-                # V5.9: GPS EMA 200 - RELAJADO PARA SCALPING
+                # V6.1: FILTRO EMA 200 — PROTECCIÓN INSTITUCIONAL
                 # ═══════════════════════════════════════════════════════════════════
                 ema_200_actual = ind_actual.get('ema200')
-                if ema_200_actual and accion in ["LONG", "SHORT"]:
+                if ema_200_actual:
                     if accion == "LONG" and precio_actual < ema_200_actual:
-                        log(f"   🛡️ V6.0 REJECT: Intento de LONG bajo EMA200 de 1H (Precio ${precio_actual} < EMA200 ${ema_200_actual}). Forzando WAIT.")
-                        accion = "WAIT"
-                        confianza = 0
+                        log(f"   🛡️ EMA200 REJECT: LONG bajo EMA200 (${precio_actual:.4f} < ${ema_200_actual:.4f}). Descartando.")
+                        continue
                     elif accion == "SHORT" and precio_actual > ema_200_actual:
-                        log(f"   ⚠️ GPS: SHORT contra EMA200 (Precio ${precio_actual} > EMA200 ${ema_200_actual}) - Penalización fuerte.")
-                        score_ajuste -= 0.15
+                        log(f"   ⚠️ EMA200: SHORT contra tendencia alcista (penalización confianza)")
+                        confianza = max(0.0, confianza - 0.10)
 
-                if accion in ["LONG", "SHORT"]:
-                    confianza = max(0.0, min(0.99, confianza + score_ajuste))
-                    if LOG_DETALLADO:
-                        log(f"   🧭 Modo: {modo_mercado} | Ajuste: {score_ajuste:+.2f}")
-                        if reglas_aplicadas:
-                            log(f"   🧪 Reglas: {'; '.join(reglas_aplicadas)[:120]}")
-                else:
-                    modo_mercado = "TREND"
+                if confianza < CONFIANZA_MINIMA:
+                    log(f"   ⏸️ Confianza {int(confianza*100)}% < {int(CONFIANZA_MINIMA*100)}% tras filtro EMA200")
+                    continue
 
-                conf_pct = int(confianza * 100)
-                log(f"   📊 IA: {accion} | Confianza: {conf_pct}% | Temp: {temporalidad}")
-                log(f"   💭 {razon[:80]}")
+                # ═══════════════════════════════════════════════════════════════════
+                # V6.1: FILTRO IA — Gemini como VALIDADOR (NO generador)
+                # Solo se llama SI hay una señal técnica válida
+                # ═══════════════════════════════════════════════════════════════════
+                # Empieza en False — solo se pone True si Gemini explícitamente devuelve "VALIDAR"
+                _ia_validado = False
 
-                # Guardar oportunidad si es válida
+                if USAR_IA and IA_MODO == "FILTRO":
+                    contexto_ia = {
+                        "symbol": symbol,
+                        "accion": accion,
+                        "precio_actual": precio_actual,
+                        "rsi": float(ind_actual.get('rsi', 50)),
+                        "tendencia_ema": ind_actual.get('tendencia_ema', 'LATERAL'),
+                        "ema20": ind_actual.get('ema20', 'N/A'),
+                        "ema50": ind_actual.get('ema50', 'N/A'),
+                        "volumen_relativo": float(ind_actual.get('volumen_relativo', 1.0)),
+                        "atr_percent": float(ind_actual.get('atr_percent', 0)),
+                    }
+                    decision_ia = evaluar_con_ia(gemini_client, contexto_ia)
+                    if decision_ia != "VALIDAR":
+                        log(f"   🚫 [IA-FILTRO] Señal RECHAZADA por Gemini. Descartando {symbol}.")
+                        continue
+                    # Solo aquí: IA fue llamada y devolvió "VALIDAR" explícitamente
+                    _ia_validado = True
+                    _ia_senales_validadas += 1  # V6.1: acumular aprobaciones
+                    log(f"   ✅ [IA-FILTRO] Señal VALIDADA por Gemini.")
+
+                # Guardar oportunidad si pasó todos los filtros
                 if accion in ["LONG", "SHORT"] and confianza >= CONFIANZA_MINIMA:
                     oportunidades.append({
                         'symbol': symbol,
                         'accion': accion,
                         'confianza': confianza,
-                        'temporalidad': temporalidad,
+                        'temporalidad': temporalidad or temp_actual,
                         'modo_mercado': modo_mercado,
                         'razon': razon,
                         'precio_actual': precio_actual,
                         'volatilidad': volatilidad,
-                        'indicadores': indicadores
+                        'indicadores': indicadores,
+                        'ia_validado': _ia_validado,  # V6.1: True SOLO si Gemini dijo "VALIDAR"
                     })
-                    log(f"   ✨ Oportunidad guardada!")
+                    log(f"   ✨ Oportunidad guardada: {symbol} {accion} ({int(confianza*100)}%) [IA={'✅' if _ia_validado else '⬜'}]")
                     # V5.3: Registrar decisión ejecutable en SQLite
                     try:
-                        registrar_decision(symbol, accion, confianza, temporalidad, razon[:200], fg_valor, True)
+                        registrar_decision(symbol, accion, confianza, temporalidad or temp_actual, razon[:200], fg_valor, True)
                     except Exception:
                         pass
-                elif accion == "WAIT":
-                    log(f"   ⏸️ IA decide esperar")
-                else:
-                    log(f"   ⏸️ Confianza {conf_pct}% < {int(CONFIANZA_MINIMA*100)}%")
+
                     
             except Exception as e:
                 log(f"   ⚠️ Error en {symbol}: {e}")
@@ -2400,14 +2488,10 @@ Responde SOLO con este formato JSON perfecto:
             conf_pct = int(confianza * 100)
 
             # ═════════════════════════════════════════════════════════════════
-            # V3.0: KELLY CRITERION PARA POSITION SIZING
-            # Calcula el monto óptimo basándose en win-rate histórico
+            # V6.1: POSITION SIZING — 2% FIJO DEL BALANCE TOTAL
+            # Kelly Criterion eliminado por inconsistencia con pocos datos.
             # ═════════════════════════════════════════════════════════════════
-            saldo_disponible = saldo * ESCUDO_TRABAJO
-            if KELLY_ACTIVO:
-                monto = calcular_kelly(saldo_disponible, confianza)
-            else:
-                monto = calcular_monto(saldo, confianza)
+            monto = calcular_monto(saldo_total)
 
             if modo_mercado == "RANGE":
                 monto *= FACTOR_MONTO_RANGO
@@ -2484,7 +2568,8 @@ Responde SOLO con este formato JSON perfecto:
                             symbol=symbol, side=side, action=accion,
                             entry_price=precio_actual, quantity=cantidad,
                             confidence=confianza, temporalidad=temporalidad,
-                            razon=razon[:200]
+                            razon=razon[:200],
+                            ia_validado=op.get('ia_validado', False)  # V6.1: auditoría IA
                         )
                     except Exception as db_err:
                         log(f"   ⚠️ Error registrando trade en DB: {db_err}")
@@ -2492,6 +2577,17 @@ Responde SOLO con este formato JSON perfecto:
                 log(f"   ⚠️ Cantidad mínima no alcanzada para {symbol}")
         
         log(f"\n✅ Ciclo completado. {ejecutadas} órdenes ejecutadas.")
+
+        # V6.1: Log de métricas de aprobación IA al final de cada ciclo
+        if USAR_IA and _ia_senales_total > 0:
+            approval_rate = (_ia_senales_validadas / _ia_senales_total) * 100
+            log(
+                f"🤖 [IA-MÉTRICAS] Señales generadas: {_ia_senales_total} | "
+                f"Validadas: {_ia_senales_validadas} | "
+                f"Approval rate: {approval_rate:.1f}%"
+            )
+        elif USAR_IA:
+            log("🤖 [IA-MÉTRICAS] Sin señales técnicas generadas en este ciclo.")
         
     except Exception as e:
         log(f"⚠️ Error en ciclo de trading: {e}")
@@ -2541,10 +2637,19 @@ log(f"🚀 Iniciando Bot Binance Futuros {BOT_VERSION}...")
 log("📊 Fixed Risk Sizing + Technical Scalper + Gemini 2.0")
 
 # Conexión a Binance
+cm: CapitalManager = None   # V6.2: instanciado después de obtener el saldo real
 try:
     client = conectar_binance()
     saldo = obtener_balance(client)
     log(f"✅ Conexión exitosa. Balance: ${saldo:.2f} USDT")
+
+    # V6.2: Inicializar CapitalManager con el saldo real del exchange
+    cm = CapitalManager(capital_inicial=saldo)
+    cm.inicializar_tabla()     # Crea tabla capital_estado si no existe
+    if cm.cargar_estado():     # Restaura estado previo si existe
+        log(f"💼 [CapMgr] Estado restaurado: {cm.resumen_estado()}")
+    else:
+        log(f"💼 [CapMgr] Primera sesión. Capital inicial: ${saldo:.2f}")
 except Exception as e:
     log(f"❌ ERROR FATAL: No se pudo conectar a Binance: {e}")
     sys.exit()
@@ -2632,6 +2737,15 @@ while True:
         puede_operar = verificar_drawdown_diario(balance_equity)
         
         # ═════════════════════════════════════════════════════════════════════
+        # V6.1: CIRCUIT BREAKER IA — Reactivación automática
+        # Si USAR_IA fue desactivado por fallos y el contador ya se reseteó
+        # (porque hubo una respuesta válida), volver a activar.
+        # ═════════════════════════════════════════════════════════════════════
+        if not USAR_IA and _ia_fallos_consecutivos == 0:
+            USAR_IA = True
+            log("🟢 [IA-CIRCUIT-BREAKER] Filtro IA REACTIVADO — sin fallos consecutivos detectados.")
+
+        # ═════════════════════════════════════════════════════════════════════
         # SCHEDULER OPERATIVO - control de carga CPU/API
         # ═════════════════════════════════════════════════════════════════════
         if GUARDIAN_ACTIVO and should_run_task("guardian", INTERVALO_GUARDIAN):
@@ -2645,6 +2759,21 @@ while True:
 
         if should_run_task("trades_cerrados", INTERVALO_TRADES_CERRADOS):
             verificar_posiciones_cerradas(client)
+
+        # V6.2: Snapshot intraday de métricas IA (cada 30 min) — SILENCIOSO
+        # Solo guarda si hay señales acumuladas y hay actividad IA en la sesión.
+        if USAR_IA and _ia_senales_total > 0 and should_run_task("metricas_ia", INTERVALO_METRICAS_IA):
+            try:
+                r = guardar_metricas_ia(_ia_senales_total, _ia_senales_validadas)
+                if r.get('alerta_log'):       # Solo logear si hay alerta activa
+                    log(r['alerta_log'])
+                log(
+                    f"💾 [IA-SNAPSHOT] Métricas guardadas — "
+                    f"{_ia_senales_validadas}/{_ia_senales_total} señales "
+                    f"({round(r['approval_rate']*100,1)}%)"
+                )
+            except Exception as e:
+                log(f"⚠️ [IA-SNAPSHOT] Error guardando snapshot intraday: {e}")
         
         # ═════════════════════════════════════════════════════════════════════
         # RESUMEN SEMANAL - Solo viernes a las 18:00 (V3.0)
