@@ -2649,7 +2649,8 @@ try:
     if cm.cargar_estado():     # Restaura estado previo si existe
         log(f"💼 [CapMgr] Estado restaurado: {cm.resumen_estado()}")
     else:
-        log(f"💼 [CapMgr] Primera sesión. Capital inicial: ${saldo:.2f}")
+        cm.guardar_estado()    # Guarda la base 0 en SQLite para que el Dashboard la lea
+        log(f"💼 [CapMgr] Primera sesión. Capital inicial ({saldo:.2f}) guardado.")
 except Exception as e:
     log(f"❌ ERROR FATAL: No se pudo conectar a Binance: {e}")
     sys.exit()

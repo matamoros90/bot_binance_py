@@ -120,11 +120,29 @@ def get_ia_metricas_sesion():
         return df.iloc[0]
     except Exception: return None
 
+def get_pnl_data():
+    try:
+        df_cap = pd.read_sql("SELECT capital_actual FROM capital_estado ORDER BY id ASC", conn)
+        if df_cap.empty:
+            return None
+        cap_inicial = df_cap.iloc[0]['capital_actual']
+        cap_actual = df_cap.iloc[-1]['capital_actual']
+        ganancia_abs = cap_actual - cap_inicial
+        ganancia_pct = (ganancia_abs / cap_inicial * 100) if cap_inicial > 0 else 0
+        return {
+            "inicial": cap_inicial,
+            "actual": cap_actual,
+            "ganancia_abs": ganancia_abs,
+            "ganancia_pct": ganancia_pct
+        }
+    except Exception:
+        return None
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LAYOUT & VISUALIZACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 # ─── 3. ESTADO DEL BOT MÁS CLARO ───
 capital = get_capital_status()
@@ -168,9 +186,27 @@ with col2:
     else:
         st.write("Sin datos de capital.")
 
+# ─── P&L TOTAL ───
+with col3:
+    st.subheader("💰 P&L Total")
+    pnl_data = get_pnl_data()
+    if pnl_data:
+        st.markdown(f"**Inicial:** ${pnl_data['inicial']:,.2f}")
+        st.markdown(f"**Actual:** ${pnl_data['actual']:,.2f}")
+        
+        # Color conditional
+        color = "#28a745" if pnl_data['ganancia_abs'] >= 0 else "#dc3545"
+        signo = "+" if pnl_data['ganancia_abs'] >= 0 else ""
+        st.markdown(f"**Ganancia:** <span style='color:{color}; font-weight:bold;'>{signo}${pnl_data['ganancia_abs']:,.2f} ({signo}{pnl_data['ganancia_pct']:.2f}%)</span>", unsafe_allow_html=True)
+        if capital is not None:
+            max_hist = capital['capital_maximo_historico']
+            st.caption(f"Máx. Histórico: ${max_hist:,.2f}")
+    else:
+        st.write("Sin datos suficientes")
+
 # ─── BLOQUE RENDIMIENTO ───
 rendimiento = get_rendimiento_global()
-with col3:
+with col4:
     st.subheader("Rendimiento (All-Time)")
     st.metric("Total Trades", rendimiento["total_trades"])
     cols_rend_1, cols_rend_2 = st.columns(2)
@@ -178,7 +214,7 @@ with col3:
     cols_rend_2.metric("Profit Factor", rendimiento["profit_factor"])
 
 # ─── BLOQUE IA ───
-with col4:
+with col5:
     st.subheader("Filtro IA Gemini")
     ia_sesion = get_ia_metricas_sesion()
     
