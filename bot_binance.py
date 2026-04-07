@@ -84,6 +84,7 @@ stats_semanales = {
 # ═══════════════════════════════════════════════════════════════════════════════
 IA_MAX_FALLOS = 5                   # Umbral de fallos consecutivos antes de desactivar IA
 _ia_fallos_consecutivos = 0         # Contador global de fallos consecutivos del filtro IA
+_ia_cooldown_hasta = 0.0            # Timestamp hasta cuándo la IA está en cooldown (15 min)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MÉTRICAS DE SESIÓN — APROBACIÓN IA (V6.1)
@@ -828,7 +829,7 @@ def evaluar_con_ia(gemini_client, contexto: dict) -> str:
         "VALIDAR" si la IA aprueba la señal técnica
         "RECHAZAR" en cualquier otro caso (señal dudosa, error, respuesta inválida)
     """
-    global _ia_fallos_consecutivos, USAR_IA
+    global _ia_fallos_consecutivos, USAR_IA, _ia_cooldown_hasta
 
     if not gemini_client:
         log("   ⚠️ [IA-FILTRO] Gemini no disponible → RECHAZAR por defecto")
@@ -914,6 +915,7 @@ NO cambies el formato."""
         except Exception as api_error:
             error_str = str(api_error)
             if '429' in error_str or 'RESOURCE_EXHAUSTED' in error_str:
+                log("   ⚠️ [IA] Rate limit alcanzado - activando cooldown si superan max fallos")
                 if attempt < MAX_RETRIES - 1:
                     time.sleep(10)
                     continue
@@ -924,11 +926,11 @@ NO cambies el formato."""
     # — Verificar umbral de circuit breaker —
     if _ia_fallos_consecutivos >= IA_MAX_FALLOS:
         USAR_IA = False
+        _ia_cooldown_hasta = time.time() + 900  # 15 minutos en segundos
         log(
-            f"\n🔴 [IA-CIRCUIT-BREAKER] ALERTA CRÍTICA: {_ia_fallos_consecutivos} fallos consecutivos del filtro IA.\n"
-            f"   🚫 USAR_IA desactivado temporalmente para proteger el capital.\n"
-            f"   🔄 Se reactivará automáticamente cuando la API de Gemini responda correctamente.\n"
-            f"   📊 Umbral configurado: IA_MAX_FALLOS = {IA_MAX_FALLOS}"
+            f"\n🔴 [IA-CIRCUIT-BREAKER] ALERTA CRÍTICA: {_ia_fallos_consecutivos} fallos consecutivos.\n"
+            f"   ⏸️ [IA] Pausada por saturación (15 min).\n"
+            f"   🔄 Durante este tiempo, el bot ejecutará operaciones en modo 100% TÉCNICO."
         )
 
     return "RECHAZAR"
@@ -2242,7 +2244,19 @@ def enviar_resumen_semanal(client):
 # MÓDULO PRINCIPAL DE TRADING (Gemini 2.0 Pure Price Action)
 # ═══════════════════════════════════════════════════════════════════════════════
 def ejecutar_trading(client, gemini_client):
-    global _ia_senales_total, _ia_senales_validadas  # V6.1: métricas de aprobación IA
+    global _ia_senales_total, _ia_senales_validadas, USAR_IA, _ia_cooldown_hasta, _ia_fallos_consecutivos
+
+    # ═══════════════════════════════════════════════════════════════════
+    # CHECK COOLDOWN DE LA IA
+    # ═══════════════════════════════════════════════════════════════════
+    if not USAR_IA and _ia_cooldown_hasta > 0 and time.time() >= _ia_cooldown_hasta:
+        USAR_IA = True
+        _ia_cooldown_hasta = 0.0
+        _ia_fallos_consecutivos = 0
+        log("✅ [IA] Reactivada tras cooldown de 15 minutos")
+
+    _ia_requests_ciclo = 0
+
     log("\n" + "="*60)
     log("🧠 GEMINI 2.0 (Price Action Mode): Iniciando ciclo de análisis...")
     log("="*60)
@@ -2375,6 +2389,25 @@ def ejecutar_trading(client, gemini_client):
                 log(f"   📊 Señal técnica: {accion} ({int(confianza*100)}%) | {temp_actual}")
                 log(f"   💭 {razon[:80]}")
 
+                # ═══════════════════════════════════════════════════════════════════
+                # NUEVO PRE-FILTRO TÉCNICO EXTREMO (Para reducir llamadas IA a <100/día)
+                # ═══════════════════════════════════════════════════════════════════
+                rsi_valido = False
+                ema_valida = False
+                vol_valido = rv >= 1.0  # Volumen relativo sólido
+                
+                if accion == "LONG":
+                    rsi_valido = (rsi <= 30)
+                    ema_valida = True if not ind_actual.get('ema200') else (precio_actual > ind_actual.get('ema200'))
+                elif accion == "SHORT":
+                    rsi_valido = (rsi >= 70)
+                    ema_valida = True if not ind_actual.get('ema200') else (precio_actual < ind_actual.get('ema200'))
+
+                if not (rsi_valido and ema_valida and vol_valido):
+                    if LOG_DETALLADO:
+                        log(f"   ⏭️ {symbol}: Pre-filtro estricto rechazó operación (RSI={rsi:.1f}, EMA_OK={ema_valida}, RV={rv:.2f}x).")
+                    continue
+
                 # V6.1: Contar señal técnica generada (antes del filtro IA)
                 _ia_senales_total += 1
 
@@ -2410,6 +2443,8 @@ def ejecutar_trading(client, gemini_client):
                 _ia_validado = False
 
                 if USAR_IA and IA_MODO == "FILTRO":
+                    _ia_requests_ciclo += 1
+                    log(f"   🤖 IA Requests/min (ciclo actual): {_ia_requests_ciclo} llamadas enviadas.")
                     contexto_ia = {
                         "symbol": symbol,
                         "accion": accion,
@@ -2422,6 +2457,11 @@ def ejecutar_trading(client, gemini_client):
                         "atr_percent": float(ind_actual.get('atr_percent', 0)),
                     }
                     decision_ia = evaluar_con_ia(gemini_client, contexto_ia)
+                    
+                    # ⚠️ CRITICO: Pausa OBLIGATORIA después de llamar a la IA
+                    # Esto evita el error 429 TooManyRequests (Rate Limit de Gemini de 15 RPM)
+                    time.sleep(TIEMPO_POR_ACTIVO)
+
                     if decision_ia != "VALIDAR":
                         log(f"   🚫 [IA-FILTRO] Señal RECHAZADA por Gemini. Descartando {symbol}.")
                         continue
