@@ -96,6 +96,23 @@ class CapitalManager:
             return False
         return True
 
+    def sincronizar_con_exchange(self, balance_real: float, log_fn=None):
+        """
+        Asegura sincronización estricta: capital_actual nunca debe superar el balance real.
+        Si es mayor, se ajusta automáticamente (min(capital_db, balance_real)).
+        """
+        _log = log_fn if log_fn else print
+        if self.capital_actual > balance_real:
+            capital_antes = self.capital_actual
+            self.capital_actual = round(balance_real, 2)
+            _log(f"[CAPITAL] Ajuste por sincronización con balance real aplicado (${capital_antes:.2f} → ${self.capital_actual:.2f})")
+            
+            # Guardamos el estado silenciosamente tras el ajuste
+            try:
+                self.guardar_estado()
+            except Exception:
+                pass
+
     # ─── Actualización después de cada trade ─────────────────────────────────
 
     def actualizar(self, pnl: float, metricas: dict, log_fn=None) -> dict:

@@ -2687,7 +2687,8 @@ try:
     cm = CapitalManager(capital_inicial=saldo)
     cm.inicializar_tabla()     # Crea tabla capital_estado si no existe
     if cm.cargar_estado():     # Restaura estado previo si existe
-        log(f"💼 [CapMgr] Estado restaurado: {cm.resumen_estado()}")
+        cm.sincronizar_con_exchange(saldo, log)
+        log(f"💼 [CapMgr] Estado restaurado y sincronizado: {cm.resumen_estado()}")
     else:
         cm.guardar_estado()    # Guarda la base 0 en SQLite para que el Dashboard la lea
         log(f"💼 [CapMgr] Primera sesión. Capital inicial ({saldo:.2f}) guardado.")
@@ -2765,6 +2766,10 @@ while True:
         # Reinicia stats al inicio de cada día y verifica drawdown máximo
         # ═════════════════════════════════════════════════════════════════════
         balance_actual = obtener_balance(client)
+        
+        # Sincronización estricta de capital (Ajuste a balance real min)
+        if cm:
+            cm.sincronizar_con_exchange(balance_actual, log)
         
         # V5.11: Usar equity total (wallet + unrealized PNL) para drawdown
         # Esto evita falsos positivos cuando hay ganancias abiertas
