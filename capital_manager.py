@@ -100,8 +100,23 @@ class CapitalManager:
         """
         Asegura sincronización estricta: capital_actual nunca debe superar el balance real.
         Si es mayor, se ajusta automáticamente (min(capital_db, balance_real)).
+        Protegido contra fallos de API (ignora balance == 0).
         """
         _log = log_fn if log_fn else print
+        # Ignorar si por error de API el balance viene en 0
+        if balance_real <= 1:
+            return
+
+        # Recuperación de fallo: si el capital_actual se fue a 0 por algún error previo y el balance real es mayor
+        if self.capital_actual <= 1 and balance_real > 1:
+            self.capital_actual = round(balance_real, 2)
+            _log(f"🔄 [CAPITAL] Recuperación automática: Capital restaurado a ${self.capital_actual:.2f} (desde error cero).")
+            try:
+                self.guardar_estado()
+            except Exception:
+                pass
+            return
+
         if self.capital_actual > balance_real:
             capital_antes = self.capital_actual
             self.capital_actual = round(balance_real, 2)
