@@ -2397,10 +2397,10 @@ def ejecutar_trading(client, gemini_client):
                 vol_valido = rv >= 1.0  # Volumen relativo sólido
                 
                 if accion == "LONG":
-                    rsi_valido = (rsi <= 30)
+                    rsi_valido = (rsi <= 35)
                     ema_valida = True if not ind_actual.get('ema200') else (precio_actual > ind_actual.get('ema200'))
                 elif accion == "SHORT":
-                    rsi_valido = (rsi >= 70)
+                    rsi_valido = (rsi >= 65)
                     ema_valida = True if not ind_actual.get('ema200') else (precio_actual < ind_actual.get('ema200'))
 
                 if not (rsi_valido and ema_valida and vol_valido):
