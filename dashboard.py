@@ -12,6 +12,7 @@ from binance.client import Client
 load_dotenv()
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_API_SECRET = os.getenv("BINANCE_SECRET")
+USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE PÁGINA
@@ -151,7 +152,7 @@ def get_binance_open_positions():
         if not BINANCE_API_KEY or not BINANCE_API_SECRET:
             return pd.DataFrame(), "Claves de API Binance no configuradas."
             
-        client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+        client = Client(BINANCE_API_KEY, BINANCE_API_SECRET, testnet=USAR_TESTNET)
         risk = client.futures_position_information()
         
         open_positions = []
