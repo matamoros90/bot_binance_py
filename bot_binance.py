@@ -31,7 +31,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V6.1 Elite (IA-Filter Edition)"
-CONFIANZA_MINIMA = 0.60   # V6.2: 60% mínimo (IA entra entre 60% y 75%)
+CONFIANZA_MINIMA = 0.65   # V6.2: 65% mínimo (IA entra entre 65% y 75%)
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -779,18 +779,18 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor, temp_actual="15
     atr_pct = float(ind_actual.get('atr_percent', 0))
     vol_rel = float(ind_actual.get('volumen_relativo', 1))
 
-    # Filtro estricto de liquidez (RV < 0.1x) para descartar activos muertos o sin volumen
-    if atr_pct < 0.05 or vol_rel < 0.1:
-        return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 0.1x o volatilidad nula"
+    # Filtro estricto de liquidez (RV < 0.05x) para descartar activos muertos o sin volumen
+    if atr_pct < 0.05 or vol_rel < 0.05:
+        return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 0.05x o volatilidad nula"
 
     # V5.16: Continuación firme (Rebote/Pullback normal)
     if 'BAJISTA' in t1:
-        if rsi >= 60:
-            return "SHORT", 0.75, temp_actual, "Fallback técnico: rebote bajista exhausto (RSI>=60)"
+        if rsi >= 55:
+            return "SHORT", 0.75, temp_actual, "Fallback técnico: rebote bajista exhausto (RSI>=55)"
 
     if 'ALCISTA' in t1:
-        if rsi <= 40:
-            return "LONG", 0.75, temp_actual, "Fallback técnico: rebote alcista exhausto (RSI<=40)"
+        if rsi <= 45:
+            return "LONG", 0.75, temp_actual, "Fallback técnico: rebote alcista exhausto (RSI<=45)"
 
     if rsi <= 25:
         return "LONG", 0.70, temp_actual, "Fallback técnico: sobreventa extrema"
@@ -2362,9 +2362,9 @@ def ejecutar_trading(client, gemini_client):
                 ema200 = float(ind_actual.get('ema200', 0)) if ind_actual.get('ema200') is not None else 0
                 
                 # V6.0: FILTRO INSTITUCIONAL DE LIQUIDEZ Y EMA200
-                if rv < 0.1:
+                if rv < 0.05:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.10x)")
+                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.05x)")
                     continue
                 
                 # Skip si RSI estrictamente neutral + tendencia lateral + rango medio apretado
@@ -2393,12 +2393,12 @@ def ejecutar_trading(client, gemini_client):
                 # PRE-FILTRO TÉCNICO (Sin bloqueo por EMA)
                 # ═══════════════════════════════════════════════════════════════════
                 rsi_valido = False
-                vol_valido = rv >= 0.10
+                vol_valido = rv >= 0.05
                 
                 if accion == "LONG":
-                    rsi_valido = (rsi <= 40)
+                    rsi_valido = (rsi <= 45)
                 elif accion == "SHORT":
-                    rsi_valido = (rsi >= 60)
+                    rsi_valido = (rsi >= 55)
 
                 if not rsi_valido:
                     if LOG_DETALLADO:
@@ -2455,9 +2455,11 @@ def ejecutar_trading(client, gemini_client):
 
                 if bypass_ia:
                     _ia_validado = True
-                    motivo = "RSI Extremo + RV>=0.20" if es_rsi_extremo else f"Alta Confianza ({int(confianza*100)}%)"
-                    log(f"   ⚡ [AUTO-EJECUCIÓN] Señal Validada automáticamente por {motivo}. Omitiendo IA.")
-                elif confianza >= 0.60 and USAR_IA and IA_MODO == "FILTRO":
+                    if es_rsi_extremo:
+                        log(f"   ⚡ AUTO-EJECUCIÓN POR RSI EXTREMO ({rsi:.1f}). Omitiendo IA.")
+                    else:
+                        log(f"   ⚡ AUTO-EJECUCIÓN POR ALTA CONFIANZA ({int(confianza*100)}%). Omitiendo IA.")
+                elif confianza >= 0.65 and USAR_IA and IA_MODO == "FILTRO":
                     _ia_requests_ciclo += 1
                     log(f"   🤖 IA Requests/min (ciclo actual): {_ia_requests_ciclo} llamadas enviadas.")
                     contexto_ia = {
