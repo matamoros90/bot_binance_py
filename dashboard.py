@@ -6,12 +6,12 @@ from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 import altair as alt
 from dotenv import load_dotenv
-from binance.um_futures import UMFutures
+from binance.client import Client
 
 # Cargar variables de entorno
 load_dotenv()
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
-BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
+BINANCE_API_SECRET = os.getenv("BINANCE_SECRET")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE PÁGINA
@@ -151,15 +151,15 @@ def get_binance_open_positions():
         if not BINANCE_API_KEY or not BINANCE_API_SECRET:
             return pd.DataFrame(), "Claves de API Binance no configuradas."
             
-        client = UMFutures(key=BINANCE_API_KEY, secret=BINANCE_API_SECRET)
-        risk = client.get_position_risk()
+        client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+        risk = client.futures_position_information()
         
         open_positions = []
         for p in risk:
             amt = float(p['positionAmt'])
             if amt != 0:
                 entry = float(p['entryPrice'])
-                pnl = float(p['unrealizedProfit'])
+                pnl = float(p.get('unRealizedProfit', p.get('unrealizedProfit', 0)))
                 mark = float(p['markPrice'])
                 leverage = float(p['leverage'])
                 roi = (pnl / (entry * abs(amt) / leverage)) * 100 if entry > 0 else 0
