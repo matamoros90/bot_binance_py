@@ -189,7 +189,7 @@ def get_binance_open_positions():
 # LAYOUT & VISUALIZACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4 = st.columns(4)
 
 # ─── 3. ESTADO DEL BOT MÁS CLARO ───
 capital = get_capital_status()
@@ -260,24 +260,7 @@ with col4:
     cols_rend_1.metric("Win Rate", f"{rendimiento['win_rate']}%")
     cols_rend_2.metric("Profit Factor", rendimiento["profit_factor"])
 
-# ─── BLOQUE IA ───
-with col5:
-    st.subheader("Filtro IA Gemini")
-    ia_sesion = get_ia_metricas_sesion()
-    
-    if ia_sesion is not None and ia_sesion['senales_total'] > 0:
-        ap_rate = round((ia_sesion['senales_validadas'] / ia_sesion['senales_total']) * 100, 1)
-        st.metric("Approval Rate (Sesión)", f"{ap_rate}%", f"{ia_sesion['senales_validadas']}/{ia_sesion['senales_total']} señales")
-    else:
-        st.metric("Approval Rate (Sesión)", "N/A")
-        
-    ia_24h = get_ia_metricas(1)
-    ia_7d = get_ia_metricas(7)
-    
-    if ia_24h:
-        st.caption(f"**24h:** {ia_24h['rate']}% ({ia_24h['validadas']}/{ia_24h['total']})")
-    if ia_7d:
-        st.caption(f"**7d:** {ia_7d['rate']}% ({ia_7d['validadas']}/{ia_7d['total']})")
+# (Sección de filtro IA eliminada por cambio a modo 100% algorítmico)
 
 st.divider()
 
