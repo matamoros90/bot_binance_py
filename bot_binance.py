@@ -31,7 +31,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V6.1 Elite (IA-Filter Edition)"
-CONFIANZA_MINIMA = 0.65   # V6.2: 65% mínimo (IA entra entre 65% y 75%)
+CONFIANZA_MINIMA = 0.70   # V6.3: IA removida, requerimos 70% min para operaciones técnicas
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -2439,56 +2439,21 @@ def ejecutar_trading(client, gemini_client):
                     continue
 
                 # ═══════════════════════════════════════════════════════════════════
-                # V6.1: FILTRO IA — Gemini como VALIDADOR (NO generador)
-                # Solo se llama SI hay una señal técnica válida
+                # VALIDACIÓN FINAL TÉCNICA (SIN IA)
                 # ═══════════════════════════════════════════════════════════════════
-                # Empieza en False — solo se pone True si Gemini explícitamente devuelve "VALIDAR" o es bypass
-                _ia_validado = False
-
                 es_rsi_extremo = False
                 if ((accion == "LONG" and rsi <= 30) or (accion == "SHORT" and rsi >= 70)) and rv >= 0.20:
                     es_rsi_extremo = True
 
-                alta_confianza = confianza >= 0.75
+                alta_confianza = confianza >= 0.70
 
-                bypass_ia = es_rsi_extremo or alta_confianza
-
-                if bypass_ia:
-                    _ia_validado = True
-                    if es_rsi_extremo:
-                        log(f"   ⚡ AUTO-EJECUCIÓN POR RSI EXTREMO ({rsi:.1f}). Omitiendo IA.")
-                    else:
-                        log(f"   ⚡ AUTO-EJECUCIÓN POR ALTA CONFIANZA ({int(confianza*100)}%). Omitiendo IA.")
-                elif confianza >= 0.65 and USAR_IA and IA_MODO == "FILTRO":
-                    _ia_requests_ciclo += 1
-                    log(f"   🤖 IA Requests/min (ciclo actual): {_ia_requests_ciclo} llamadas enviadas.")
-                    contexto_ia = {
-                        "symbol": symbol,
-                        "accion": accion,
-                        "precio_actual": precio_actual,
-                        "rsi": float(ind_actual.get('rsi', 50)),
-                        "tendencia_ema": ind_actual.get('tendencia_ema', 'LATERAL'),
-                        "ema20": ind_actual.get('ema20', 'N/A'),
-                        "ema50": ind_actual.get('ema50', 'N/A'),
-                        "volumen_relativo": float(ind_actual.get('volumen_relativo', 1.0)),
-                        "atr_percent": float(ind_actual.get('atr_percent', 0)),
-                    }
-                    decision_ia = evaluar_con_ia(gemini_client, contexto_ia)
-                    
-                    # ⚠️ CRITICO: Pausa OBLIGATORIA después de llamar a la IA
-                    # Esto evita el error 429 TooManyRequests (Rate Limit de Gemini de 15 RPM)
-                    time.sleep(TIEMPO_POR_ACTIVO)
-
-                    if decision_ia != "VALIDAR":
-                        log(f"   🚫 [IA-FILTRO] {symbol}: RECHAZADO POR IA.")
-                        continue
-                    # Solo aquí: IA fue llamada y devolvió "VALIDAR" explícitamente
-                    _ia_validado = True
-                    _ia_senales_validadas += 1  # V6.1: acumular aprobaciones
-                    log(f"   ✅ [IA-FILTRO] Señal VALIDADA por Gemini.")
+                if es_rsi_extremo:
+                    log(f"   ⚡ AUTO-EJECUCIÓN POR RSI EXTREMO ({rsi:.1f}).")
+                elif alta_confianza:
+                    log(f"   ⚡ AUTO-EJECUCIÓN POR ALTA CONFIANZA ({int(confianza*100)}%).")
                 else:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: RECHAZADO (Confianza {int(confianza*100)}% insuficiente y sin bypass IA)")
+                        log(f"   ⏭️ {symbol}: RECHAZADO (Confianza {int(confianza*100)}% insuficiente < 70% y RSI normal)")
                     continue
 
                 # Guardar oportunidad si pasó todos los filtros
@@ -2503,9 +2468,9 @@ def ejecutar_trading(client, gemini_client):
                         'precio_actual': precio_actual,
                         'volatilidad': volatilidad,
                         'indicadores': indicadores,
-                        'ia_validado': _ia_validado,  # V6.1: True SOLO si Gemini dijo "VALIDAR"
+                        'ia_validado': True,  # Para retro-compatibilidad (no hay IA)
                     })
-                    log(f"   ✨ Oportunidad guardada: {symbol} {accion} ({int(confianza*100)}%) [IA={'✅' if _ia_validado else '⬜'}]")
+                    log(f"   ✨ Oportunidad técnica guardada: {symbol} {accion} ({int(confianza*100)}%)")
                     # V5.3: Registrar decisión ejecutable en SQLite
                     try:
                         registrar_decision(symbol, accion, confianza, temporalidad or temp_actual, razon[:200], fg_valor, True)
