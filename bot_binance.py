@@ -1251,36 +1251,59 @@ def actualizar_trailing_sl(client):
             
             tracking = posiciones_tracking[symbol]
             
-            # V6.0: Trailing SL agresivo (Activación al +0.8%)
+            # V6.3: Break-Even y Trailing SL
             ganancia_actual = ((precio_actual - entry_price) / entry_price) if side == 'LONG' else ((entry_price - precio_actual) / entry_price)
+            
+            # Umbrales
+            UMBRAL_BREAKEVEN = 0.006  # 0.6%
+            UMBRAL_TRAILING = 0.010   # 1.0%
             
             if side == 'LONG':
                 if precio_actual > tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                if ganancia_actual >= 0.008:
+                # Calcular mejor SL posible
+                nuevo_sl = None
+                ganancia_best = ((tracking['best_price'] - entry_price) / entry_price)
+                
+                if ganancia_best >= UMBRAL_TRAILING:
                     nuevo_sl = tracking['best_price'] * (1 - TRAILING_SL_PERCENT)
+                elif ganancia_best >= UMBRAL_BREAKEVEN:
+                    # Break-even estricto (+0.1% para cubrir fees)
+                    nuevo_sl = entry_price * 1.001
+                    
+                if nuevo_sl is not None:
                     if tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'SELL', nuevo_sl, abs(cantidad))
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((nuevo_sl - entry_price) / entry_price) * 100
-                            log(f"📈 Trailing SL V6.0 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
+                            tipo_ajuste = "Trailing SL" if ganancia_best >= UMBRAL_TRAILING else "Break-Even"
+                            log(f"📈 {tipo_ajuste} V6.3 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
             
             else:  # SHORT
                 if precio_actual < tracking['best_price']:
                     tracking['best_price'] = precio_actual
                 
-                if ganancia_actual >= 0.008:
+                nuevo_sl = None
+                ganancia_best = ((entry_price - tracking['best_price']) / entry_price)
+                
+                if ganancia_best >= UMBRAL_TRAILING:
                     nuevo_sl = tracking['best_price'] * (1 + TRAILING_SL_PERCENT)
+                elif ganancia_best >= UMBRAL_BREAKEVEN:
+                    # Break-even estricto (-0.1% para cubrir fees)
+                    nuevo_sl = entry_price * 0.999
+                    
+                if nuevo_sl is not None:
                     if tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']:
                         cancelar_ordenes_sl(client, symbol)
                         success, _ = crear_orden_sl(client, symbol, 'BUY', nuevo_sl, abs(cantidad))
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((entry_price - nuevo_sl) / entry_price) * 100
-                            log(f"📉 Trailing SL V6.0 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
+                            tipo_ajuste = "Trailing SL" if ganancia_best >= UMBRAL_TRAILING else "Break-Even"
+                            log(f"📉 {tipo_ajuste} V6.3 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
                         
     except Exception as e:
         log(f"⚠️ Error en trailing SL: {e}")
@@ -2313,6 +2336,23 @@ def ejecutar_trading(client, gemini_client):
                 
             try:
                 # ═══════════════════════════════════════════════════════════════════
+                # CONFIRMACION MACRO 1H OBLIGATORIA
+                # ═══════════════════════════════════════════════════════════════════
+                velas_1h = obtener_velas(client, symbol, '1h', VELAS_CANTIDAD)
+                if not velas_1h or len(velas_1h) < 200:
+                    continue
+                
+                # Calcular indicadores 1H (sin la vela en formación)
+                klines_1h = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas_1h[:-1]]
+                ind_1h = analizar_indicadores_completo(klines_1h)
+                
+                if not ind_1h or not ind_1h.get('ema200'):
+                    continue
+                
+                ema200_1h = float(ind_1h['ema200'])
+                precio_1h = float(ind_1h['precio_actual'])
+
+                # ═══════════════════════════════════════════════════════════════════
                 # V5.9: SCALPING / DAY TRADING DINÁMICO
                 # ═══════════════════════════════════════════════════════════════════
                 temp_actual = TEMPORALIDADES[0]
@@ -2325,7 +2365,8 @@ def ejecutar_trading(client, gemini_client):
                 # ═══════════════════════════════════════════════════════════════════
                 # V5.9: CALCULAR INDICADORES
                 # ═══════════════════════════════════════════════════════════════════
-                klines_actual = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas_actual]
+                # Usar velas cerradas ([:-1]) para evitar entradas en falso por mechas
+                klines_actual = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']] for v in velas_actual[:-1]]
                 ind_actual = analizar_indicadores_completo(klines_actual)
                 
                 if not ind_actual:
@@ -2350,16 +2391,16 @@ def ejecutar_trading(client, gemini_client):
                 rv = float(ind_actual.get('volumen_relativo', 1))
                 ema200 = float(ind_actual.get('ema200', 0)) if ind_actual.get('ema200') is not None else 0
                 
-                # V6.0: FILTRO INSTITUCIONAL DE LIQUIDEZ Y EMA200
-                if rv < 0.05:
+                # V6.3: FILTRO INSTITUCIONAL DE LIQUIDEZ MÍNIMA (0.15 STRICT)
+                if rv < 0.15:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.05x)")
+                        log(f"   🚫 RECHAZADO: Bajo volumen (RV {rv:.2f}x < 0.15x)")
                     continue
                 
-                # Skip si RSI estrictamente neutral + tendencia lateral + rango medio apretado
-                if (45 < rsi < 55 and 'LATERAL' in tendencia and 45 < posicion_rango < 55):
+                # Skip ESTRICTO si RSI en lateralidad (45-55) sin importar la tendencia
+                if 45 <= rsi <= 55:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: Pre-filtro skip (RSI {rsi:.0f}, {tendencia}, rango {posicion_rango:.0f}%)")
+                        log(f"   🚫 RECHAZADO: Lateralidad (RSI {rsi:.0f} sin dirección clara)")
                     continue
                 
                 # ═══════════════════════════════════════════════════════════════════
@@ -2379,10 +2420,21 @@ def ejecutar_trading(client, gemini_client):
                 log(f"   💭 {razon[:80]}")
 
                 # ═══════════════════════════════════════════════════════════════════
-                # PRE-FILTRO TÉCNICO (Sin bloqueo por EMA)
+                # BLOQUEO DIRECCIONAL ESTRICTO MACRO (1H)
+                # ═══════════════════════════════════════════════════════════════════
+                if accion == "LONG" and precio_1h < ema200_1h:
+                    if LOG_DETALLADO:
+                        log(f"   🚫 RECHAZADO: Contra tendencia 1H (LONG bajo EMA200 1H en ${ema200_1h:.4f})")
+                    continue
+                elif accion == "SHORT" and precio_1h > ema200_1h:
+                    if LOG_DETALLADO:
+                        log(f"   🚫 RECHAZADO: Contra tendencia 1H (SHORT sobre EMA200 1H en ${ema200_1h:.4f})")
+                    continue
+
+                # ═══════════════════════════════════════════════════════════════════
+                # PRE-FILTRO TÉCNICO (RSI)
                 # ═══════════════════════════════════════════════════════════════════
                 rsi_valido = False
-                vol_valido = rv >= 0.05
                 
                 if accion == "LONG":
                     rsi_valido = (rsi <= 45)
@@ -2392,11 +2444,6 @@ def ejecutar_trading(client, gemini_client):
                 if not rsi_valido:
                     if LOG_DETALLADO:
                         log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f})")
-                    continue
-                    
-                if not vol_valido:
-                    if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: RECHAZADO POR RV ({rv:.2f}x)")
                     continue
 
                 # V6.1: Contar señal técnica generada (antes del filtro IA)
@@ -2410,17 +2457,7 @@ def ejecutar_trading(client, gemini_client):
                 boll_ancho_actual = (ind_actual.get('bollinger') or {}).get('ancho', 0)
                 modo_mercado = "RANGE" if ('LATERAL' in tendencia_ema and atr_pct_actual < 1.2 and boll_ancho_actual < 8) else "TREND"
 
-                # ═══════════════════════════════════════════════════════════════════
-                # FILTRO EMA 200 — PUNTUACIÓN (NO BLOQUEANTE)
-                # ═══════════════════════════════════════════════════════════════════
-                ema_200_actual = ind_actual.get('ema200')
-                if ema_200_actual:
-                    if accion == "LONG" and precio_actual < ema_200_actual:
-                        log(f"   ⚠️ EMA200: LONG bajo EMA200 (penalización confianza -10%)")
-                        confianza = max(0.0, confianza - 0.10)
-                    elif accion == "SHORT" and precio_actual > ema_200_actual:
-                        log(f"   ⚠️ EMA200: SHORT contra tendencia alcista (penalización confianza -10%)")
-                        confianza = max(0.0, confianza - 0.10)
+                # (El Filtro EMA200 estricto en 1H reemplaza la antigua penalización de score)
 
                 if confianza < CONFIANZA_MINIMA:
                     if LOG_DETALLADO:
@@ -2457,7 +2494,7 @@ def ejecutar_trading(client, gemini_client):
                         'precio_actual': precio_actual,
                         'volatilidad': volatilidad,
                         'indicadores': indicadores,
-                        'ia_validado': True,  # Para retro-compatibilidad (no hay IA)
+                        'ia_validado': False,  # AI is disabled, so no trades are AI-validated
                     })
                     log(f"   ✨ Oportunidad técnica guardada: {symbol} {accion} ({int(confianza*100)}%)")
                     # V5.3: Registrar decisión ejecutable en SQLite
