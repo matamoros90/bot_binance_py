@@ -1,24 +1,26 @@
-# 🤖 Bot Binance IA - V6.2 Elite (Institutional Grade)
+# 🤖 Bot Binance IA - V6.3 Elite (Institutional Edge)
 
 **Estado:** Producción / Gestión de Capital Dinámica / Dashboard Streamlit.  
 **Perfil:** Algorithmic Quant Trader / Gestión Activa del Drawdown
 
 Este bot opera como un "Sniper Técnico", buscando convergencias algorítmicas puras y utilizando inteligencia artificial **exclusivamente como filtro asimétrico** para proteger el margen. Está diseñado para correr 24/7 en un VPS y viene acompañado de un potente Dashboard de lectura para monitoreo remoto.
 
-## 📊 Arquitectura y KPIs
+## 📊 Arquitectura y KPIs (V6.3 Edge)
 
-- **Trading Técnico Aislado:** Estrategia basada en múltiples indicadores (EMA, ATR, RSI) y confluencia multidimensional en marcos rígidos temporales (Ej: 1H).
-- **Filtro IA (Decision Filter):** El motor LLM (Gemini 2.0 Flash) **no opera ni sugiere parámetros**. Actúa estrictamente como un validador semántico (`VALIDAR/RECHAZAR`) que otorga el paso definitivo para abrir posiciones.
+- **Filtro Macro y Bloqueo Direccional (1H):** El sistema exige alineación total. No opera contra la EMA200 medida en velas cerradas de 1 Hora. Si un target va en contra de la macrotendencia, es rechazado automáticamente.
+- **Filtro de Liquidez Estricto:** Requerimiento de Volumen Relativo (RV) mínimo aumentado a `>= 0.15x`. No se opera en mercados muertos.
+- **Filtro de Lateralidad:** Bloqueo absoluto de entradas si el oscilador principal (RSI) divaga en la zona de inercia (45 - 55).
+- **Trading Técnico Aislado:** Estrategia basada en múltiples indicadores paramétricos (EMA, ATR, RSI, Bollinger) en múltiples temporalidades (1H y 15m).
 - **Circuit Breakers Asíncronos:** Desactiva llamadas al API (Google/Binance) a nivel global en caso de timeouts o fallos continuos para no exponer el código a latencias.
 
-## 🛡️ Módulo `CapitalManager` (Gestión Dinámica de Capital)
+## 🛡️ Gestión de Riesgo Institucional (CapitalManager & Garantías)
 
 Todo el tamaño posicional está subyugado a un controlador externo sin fricción:
 
-- **Riesgo Fijo:** Conservador, anclado al **2%** por cada operación validada según cuenta.
-- **Fase de Validación:** El sistema bloquea aumentos de capital base hasta cumplir con una estadística de seguridad: `>30 trades` con `Win_Rate_Corto_Plazo > 50%` y `Profit_Factor_Global > 1.5`.
-- **Fase de Escalado Automático:** Una vez validado en tendencia ganadora, el bot incrementará el capital de forma autómata agregando un `+20%` a sí mismo con un bloqueo estricto (rate limit) de 1 vez cada 24H.
-- **Regla de Oro (Golden Rule & Cooldown):** Penaliza extrayendo un `-30%` del margen del bot si sufre una racha perdedora que cruza la barrera del **20% de Drawdown Máximo**. Al hacerlo, activará obligatoriamente un *pausado técnico o cooldown de 8 horas* para evitar vengar el mercado.
+- **Riesgo Fijo:** Conservador, anclado al **2%** por cada operación.
+- **Defensa de Posición (Break-Even):** Un candado algorítmico protege las ganancias flotantes al tocar `+0.6%` de ROI arrastrando de inmediato el Stop Loss por encima del precio de entrada (`+0.1%`) impidiendo que un ganador inicial cierre en pérdida.
+- **Acoso Dinámico (Trailing SL 1%):** Al llegar a `+1.0%` de ganancia se suelta un "Sabueso" que protege la posición trailing un 1% por debajo del mejor precio histórico.
+- **Drawdown Cooldown:** Penaliza activando un pausado técnico (enfriamiento de 8 horas) si se cruza la barrera del **20% de Drawdown Máximo** o en un límite semanal de volumen.
 
 ## 🖥️ Central de Monitorización (Streamlit Dashboard)
 
