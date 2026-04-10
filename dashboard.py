@@ -157,23 +157,23 @@ def get_binance_open_positions():
         
         open_positions = []
         for p in risk:
-            amt = float(p['positionAmt'])
+            amt = float(p.get('positionAmt', 0))
             if amt != 0:
-                entry = float(p['entryPrice'])
+                entry = float(p.get('entryPrice', 0))
                 pnl = float(p.get('unRealizedProfit', p.get('unrealizedProfit', 0)))
-                mark = float(p['markPrice'])
-                leverage = float(p['leverage'])
-                roi = (pnl / (entry * abs(amt) / leverage)) * 100 if entry > 0 else 0
+                mark = float(p.get('markPrice', 0))
+                leverage = float(p.get('leverage', 1))
+                roi = (pnl / (entry * abs(amt) / leverage)) * 100 if entry > 0 and leverage > 0 else 0
                 
                 open_positions.append({
-                    "Symbol": p['symbol'],
+                    "Symbol": p.get('symbol', 'UNKNOWN'),
                     "Tipo": "LONG" if amt > 0 else "SHORT",
                     "Tamaño": abs(amt),
                     "Entrada": entry,
                     "Precio Actual": mark,
                     "PnL ($)": pnl,
                     "ROI (%)": roi,
-                    "Liq. Price": float(p['liquidationPrice']),
+                    "Liq. Price": float(p.get('liquidationPrice', 0)),
                     "Leverage": f"{int(leverage)}x"
                 })
         
