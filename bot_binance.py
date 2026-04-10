@@ -779,18 +779,18 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor, temp_actual="15
     atr_pct = float(ind_actual.get('atr_percent', 0))
     vol_rel = float(ind_actual.get('volumen_relativo', 1))
 
-    # Filtro estricto de liquidez (RV < 0.2x) para descartar activos muertos o sin volumen
-    if atr_pct < 0.05 or vol_rel < 0.2:
-        return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 0.2x o volatilidad nula"
+    # Filtro estricto de liquidez (RV < 0.1x) para descartar activos muertos o sin volumen
+    if atr_pct < 0.05 or vol_rel < 0.1:
+        return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 0.1x o volatilidad nula"
 
     # V5.16: Continuación firme (Rebote/Pullback normal)
     if 'BAJISTA' in t1:
-        if rsi >= 65:
-            return "SHORT", 0.75, temp_actual, "Fallback técnico: rebote bajista exhausto (RSI>65)"
+        if rsi >= 60:
+            return "SHORT", 0.75, temp_actual, "Fallback técnico: rebote bajista exhausto (RSI>=60)"
 
     if 'ALCISTA' in t1:
-        if rsi <= 35:
-            return "LONG", 0.75, temp_actual, "Fallback técnico: rebote alcista exhausto (RSI<35)"
+        if rsi <= 40:
+            return "LONG", 0.75, temp_actual, "Fallback técnico: rebote alcista exhausto (RSI<=40)"
 
     if rsi <= 25:
         return "LONG", 0.70, temp_actual, "Fallback técnico: sobreventa extrema"
@@ -2287,11 +2287,11 @@ def ejecutar_trading(client, gemini_client):
         # HIBERNACIÓN SEMANAL (Sniper Mode)
         # ═══════════════════════════════════════════════════════════════════
         trades_semana = contar_trades_semana_actual()
-        if trades_semana >= 3:
-            log_throttled("hibernacion_semanal", f"💤 HIBERNACIÓN ACTIVA: Límite de {trades_semana}/3 trades semanales alcanzado. Modo Ahorro IA habilitado.", 300)
+        if trades_semana >= 10:
+            log_throttled("hibernacion_semanal", f"💤 HIBERNACIÓN ACTIVA: Límite de {trades_semana}/10 trades semanales alcanzado. Modo Ahorro IA habilitado.", 300)
             return
         else:
-            log(f"🎯 Operaciones semana actual: {trades_semana}/3 permitidas (Sniper Mode).")
+            log(f"🎯 Operaciones semana actual: {trades_semana}/10 permitidas (Modo Balanceado).")
         
         # Verificar espacios disponibles
         pos_abiertas = contar_posiciones_abiertas(client)
@@ -2362,9 +2362,9 @@ def ejecutar_trading(client, gemini_client):
                 ema200 = float(ind_actual.get('ema200', 0)) if ind_actual.get('ema200') is not None else 0
                 
                 # V6.0: FILTRO INSTITUCIONAL DE LIQUIDEZ Y EMA200
-                if rv < 0.2:
+                if rv < 0.1:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.20x)")
+                        log(f"   ⏭️ {symbol}: Rechazado por baja liquidez (RV {rv:.2f}x < 0.10x)")
                     continue
                 
                 # Skip si RSI estrictamente neutral + tendencia lateral + rango medio apretado
@@ -2394,13 +2394,13 @@ def ejecutar_trading(client, gemini_client):
                 # ═══════════════════════════════════════════════════════════════════
                 rsi_valido = False
                 ema_valida = False
-                vol_valido = rv >= 1.0  # Volumen relativo sólido
+                vol_valido = rv >= 0.10  # Volumen relativo relajado para mayor frecuencia
                 
                 if accion == "LONG":
-                    rsi_valido = (rsi <= 35)
+                    rsi_valido = (rsi <= 40)
                     ema_valida = True if not ind_actual.get('ema200') else (precio_actual > ind_actual.get('ema200'))
                 elif accion == "SHORT":
-                    rsi_valido = (rsi >= 65)
+                    rsi_valido = (rsi >= 60)
                     ema_valida = True if not ind_actual.get('ema200') else (precio_actual < ind_actual.get('ema200'))
 
                 if not (rsi_valido and ema_valida and vol_valido):
@@ -2442,7 +2442,16 @@ def ejecutar_trading(client, gemini_client):
                 # Empieza en False — solo se pone True si Gemini explícitamente devuelve "VALIDAR"
                 _ia_validado = False
 
-                if USAR_IA and IA_MODO == "FILTRO":
+                es_rsi_extremo = False
+                if (accion == "LONG" and rsi <= 30) or (accion == "SHORT" and rsi >= 70):
+                    es_rsi_extremo = True
+
+                bypass_ia = es_rsi_extremo and ema_valida
+
+                if bypass_ia:
+                    _ia_validado = True
+                    log(f"   ⚡ [AUTO-EJECUCIÓN] Señal Validada automáticamente por RSI Extremo ({rsi:.1f}) y EMA200 a favor. Omitiendo IA.")
+                elif USAR_IA and IA_MODO == "FILTRO":
                     _ia_requests_ciclo += 1
                     log(f"   🤖 IA Requests/min (ciclo actual): {_ia_requests_ciclo} llamadas enviadas.")
                     contexto_ia = {
