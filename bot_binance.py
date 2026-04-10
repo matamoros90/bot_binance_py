@@ -13,8 +13,7 @@ from zoneinfo import ZoneInfo
 from persistence import (
     inicializar_db, registrar_trade_abierto, registrar_trade_cerrado,
     registrar_decision, registrar_balance_diario, calcular_metricas_riesgo,
-    obtener_datos_kelly, generar_resumen_metricas, contar_trades_semana_actual,
-    guardar_metricas_ia,       # V6.2: snapshot + alertas IA
+    obtener_datos_kelly, generar_resumen_metricas, contar_trades_semana_actual
 )
 from capital_manager import CapitalManager  # V6.2: gestión dinámica de capital
 from indicators import (
@@ -2093,21 +2092,11 @@ def enviar_resumen_diario(client):
         # Registrar balance fin de día
         registrar_balance_diario(hora_local().strftime("%Y-%m-%d"), balance_fin=balance)
         
-        # V6.2: Persistir snapshot de métricas IA + evaluar alertas
-        alerta_tg = None
-        try:
-            resultado_ia = guardar_metricas_ia(_ia_senales_total, _ia_senales_validadas)
-            alerta_tg = resultado_ia.get('alerta_tg')
-            if resultado_ia.get('alerta_log'):
-                log(resultado_ia['alerta_log'])   # ← aparece en logs del bot
-        except Exception as e:
-            log(f"⚠️ No se pudo guardar métricas IA: {e}")
-
-        # Obtener métricas (con alerta_tg integrada si existe)
+        # Obtener métricas
         metricas_texto = generar_resumen_metricas(
             ia_senales_total=_ia_senales_total,
             ia_senales_validadas=_ia_senales_validadas,
-            alerta_tg=alerta_tg
+            alerta_tg=None
         )
         
         pnl_dia = stats_diarias.get('pnl_dia', 0)
@@ -2604,17 +2593,7 @@ def ejecutar_trading(client, gemini_client):
         
         log(f"\n✅ Ciclo completado. {ejecutadas} órdenes ejecutadas.")
 
-        # V6.1: Log de métricas de aprobación IA al final de cada ciclo
-        if USAR_IA and _ia_senales_total > 0:
-            approval_rate = (_ia_senales_validadas / _ia_senales_total) * 100
-            log(
-                f"🤖 [IA-MÉTRICAS] Señales generadas: {_ia_senales_total} | "
-                f"Validadas: {_ia_senales_validadas} | "
-                f"Approval rate: {approval_rate:.1f}%"
-            )
-        elif USAR_IA:
-            log("🤖 [IA-MÉTRICAS] Sin señales técnicas generadas en este ciclo.")
-        
+
     except Exception as e:
         log(f"⚠️ Error en ciclo de trading: {e}")
 
@@ -2792,20 +2771,7 @@ while True:
         if should_run_task("trades_cerrados", INTERVALO_TRADES_CERRADOS):
             verificar_posiciones_cerradas(client)
 
-        # V6.2: Snapshot intraday de métricas IA (cada 30 min) — SILENCIOSO
-        # Solo guarda si hay señales acumuladas y hay actividad IA en la sesión.
-        if USAR_IA and _ia_senales_total > 0 and should_run_task("metricas_ia", INTERVALO_METRICAS_IA):
-            try:
-                r = guardar_metricas_ia(_ia_senales_total, _ia_senales_validadas)
-                if r.get('alerta_log'):       # Solo logear si hay alerta activa
-                    log(r['alerta_log'])
-                log(
-                    f"💾 [IA-SNAPSHOT] Métricas guardadas — "
-                    f"{_ia_senales_validadas}/{_ia_senales_total} señales "
-                    f"({round(r['approval_rate']*100,1)}%)"
-                )
-            except Exception as e:
-                log(f"⚠️ [IA-SNAPSHOT] Error guardando snapshot intraday: {e}")
+
         
         # ═════════════════════════════════════════════════════════════════════
         # RESUMEN SEMANAL - Solo viernes a las 18:00 (V3.0)
