@@ -31,7 +31,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
 BOT_VERSION = "V6.1 Elite (IA-Filter Edition)"
-CONFIANZA_MINIMA = 0.75   # V6.0: 75% mínimo (High Conviction Only)
+CONFIANZA_MINIMA = 0.60   # V6.2: 60% mínimo (IA entra entre 60% y 75%)
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -2390,22 +2390,24 @@ def ejecutar_trading(client, gemini_client):
                 log(f"   💭 {razon[:80]}")
 
                 # ═══════════════════════════════════════════════════════════════════
-                # NUEVO PRE-FILTRO TÉCNICO EXTREMO (Para reducir llamadas IA a <100/día)
+                # PRE-FILTRO TÉCNICO (Sin bloqueo por EMA)
                 # ═══════════════════════════════════════════════════════════════════
                 rsi_valido = False
-                ema_valida = False
-                vol_valido = rv >= 0.10  # Volumen relativo relajado para mayor frecuencia
+                vol_valido = rv >= 0.10
                 
                 if accion == "LONG":
                     rsi_valido = (rsi <= 40)
-                    ema_valida = True if not ind_actual.get('ema200') else (precio_actual > ind_actual.get('ema200'))
                 elif accion == "SHORT":
                     rsi_valido = (rsi >= 60)
-                    ema_valida = True if not ind_actual.get('ema200') else (precio_actual < ind_actual.get('ema200'))
 
-                if not (rsi_valido and ema_valida and vol_valido):
+                if not rsi_valido:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: Pre-filtro estricto rechazó operación (RSI={rsi:.1f}, EMA_OK={ema_valida}, RV={rv:.2f}x).")
+                        log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f})")
+                    continue
+                    
+                if not vol_valido:
+                    if LOG_DETALLADO:
+                        log(f"   ⏭️ {symbol}: RECHAZADO POR RV ({rv:.2f}x)")
                     continue
 
                 # V6.1: Contar señal técnica generada (antes del filtro IA)
@@ -2420,38 +2422,42 @@ def ejecutar_trading(client, gemini_client):
                 modo_mercado = "RANGE" if ('LATERAL' in tendencia_ema and atr_pct_actual < 1.2 and boll_ancho_actual < 8) else "TREND"
 
                 # ═══════════════════════════════════════════════════════════════════
-                # V6.1: FILTRO EMA 200 — PROTECCIÓN INSTITUCIONAL
+                # FILTRO EMA 200 — PUNTUACIÓN (NO BLOQUEANTE)
                 # ═══════════════════════════════════════════════════════════════════
                 ema_200_actual = ind_actual.get('ema200')
                 if ema_200_actual:
                     if accion == "LONG" and precio_actual < ema_200_actual:
-                        log(f"   🛡️ EMA200 REJECT: LONG bajo EMA200 (${precio_actual:.4f} < ${ema_200_actual:.4f}). Descartando.")
-                        continue
+                        log(f"   ⚠️ EMA200: LONG bajo EMA200 (penalización confianza -10%)")
+                        confianza = max(0.0, confianza - 0.10)
                     elif accion == "SHORT" and precio_actual > ema_200_actual:
-                        log(f"   ⚠️ EMA200: SHORT contra tendencia alcista (penalización confianza)")
+                        log(f"   ⚠️ EMA200: SHORT contra tendencia alcista (penalización confianza -10%)")
                         confianza = max(0.0, confianza - 0.10)
 
                 if confianza < CONFIANZA_MINIMA:
-                    log(f"   ⏸️ Confianza {int(confianza*100)}% < {int(CONFIANZA_MINIMA*100)}% tras filtro EMA200")
+                    if LOG_DETALLADO:
+                        log(f"   ⏸️ {symbol}: RECHAZADO POR CONFIANZA ({int(confianza*100)}% < {int(CONFIANZA_MINIMA*100)}%)")
                     continue
 
                 # ═══════════════════════════════════════════════════════════════════
                 # V6.1: FILTRO IA — Gemini como VALIDADOR (NO generador)
                 # Solo se llama SI hay una señal técnica válida
                 # ═══════════════════════════════════════════════════════════════════
-                # Empieza en False — solo se pone True si Gemini explícitamente devuelve "VALIDAR"
+                # Empieza en False — solo se pone True si Gemini explícitamente devuelve "VALIDAR" o es bypass
                 _ia_validado = False
 
                 es_rsi_extremo = False
-                if (accion == "LONG" and rsi <= 30) or (accion == "SHORT" and rsi >= 70):
+                if ((accion == "LONG" and rsi <= 30) or (accion == "SHORT" and rsi >= 70)) and rv >= 0.20:
                     es_rsi_extremo = True
 
-                bypass_ia = es_rsi_extremo and ema_valida
+                alta_confianza = confianza >= 0.75
+
+                bypass_ia = es_rsi_extremo or alta_confianza
 
                 if bypass_ia:
                     _ia_validado = True
-                    log(f"   ⚡ [AUTO-EJECUCIÓN] Señal Validada automáticamente por RSI Extremo ({rsi:.1f}) y EMA200 a favor. Omitiendo IA.")
-                elif USAR_IA and IA_MODO == "FILTRO":
+                    motivo = "RSI Extremo + RV>=0.20" if es_rsi_extremo else f"Alta Confianza ({int(confianza*100)}%)"
+                    log(f"   ⚡ [AUTO-EJECUCIÓN] Señal Validada automáticamente por {motivo}. Omitiendo IA.")
+                elif confianza >= 0.60 and USAR_IA and IA_MODO == "FILTRO":
                     _ia_requests_ciclo += 1
                     log(f"   🤖 IA Requests/min (ciclo actual): {_ia_requests_ciclo} llamadas enviadas.")
                     contexto_ia = {
@@ -2472,12 +2478,16 @@ def ejecutar_trading(client, gemini_client):
                     time.sleep(TIEMPO_POR_ACTIVO)
 
                     if decision_ia != "VALIDAR":
-                        log(f"   🚫 [IA-FILTRO] Señal RECHAZADA por Gemini. Descartando {symbol}.")
+                        log(f"   🚫 [IA-FILTRO] {symbol}: RECHAZADO POR IA.")
                         continue
                     # Solo aquí: IA fue llamada y devolvió "VALIDAR" explícitamente
                     _ia_validado = True
                     _ia_senales_validadas += 1  # V6.1: acumular aprobaciones
                     log(f"   ✅ [IA-FILTRO] Señal VALIDADA por Gemini.")
+                else:
+                    if LOG_DETALLADO:
+                        log(f"   ⏭️ {symbol}: RECHAZADO (Confianza {int(confianza*100)}% insuficiente y sin bypass IA)")
+                    continue
 
                 # Guardar oportunidad si pasó todos los filtros
                 if accion in ["LONG", "SHORT"] and confianza >= CONFIANZA_MINIMA:
