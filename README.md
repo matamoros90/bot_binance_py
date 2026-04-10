@@ -24,9 +24,9 @@ Todo el tamaño posicional está subyugado a un controlador externo sin fricció
 
 El ecosistema ahora cuenta con un portal visual en tiempo real de tipo "Hedge Fund" (`dashboard.py`).
 
-1. **ReadOnly & Seguro:** Lee el estado general desde `trades.db` sin paralizar el hilo de peticiones del bot.
-2. **Auto-refresh Visual:** Se actualiza por su cuenta en el navegador cada 5 segundos.
-3. **Indicadores Duales:** Curva de Capital (Capital Dinámico vs Máx. Histórico), Win Rate desglosado (IA vs Analítico puro) y semáforos activos (Verde, Amarillo, Rojo) acorde al nivel del Drawdown.
+1. **Visibilidad Total de Posiciones (Live API):** El panel consulta y sincroniza las posiciones abiertas de manera estrictamente pasiva obteniendo precios y rendimientos flotantes directamente desde la API de Binance Futures cada 30 segundos, sin inyectar datos huérfanos a la BD ni emitir logs locales (UX Institutional Grade).
+2. **ReadOnly & Seguro:** Lee el estado histórico y la gestión de riesgo desde `trades.db` garantizando que el dashboard jamás intervenga ni obstaculice el hilo central del bot.
+3. **Indicadores Duales:** Curva de Capital (Capital Dinámico vs Máx. Histórico), Win Rate puro y semáforos activos (Verde, Amarillo, Rojo) acorde al nivel de Drawdown.
 
 ## 🚀 Despliegue de Grado Producción en VPS (systemd)
 

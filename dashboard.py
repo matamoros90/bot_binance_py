@@ -5,6 +5,13 @@ import os
 from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
 import altair as alt
+from dotenv import load_dotenv
+from binance.um_futures import UMFutures
+
+# Cargar variables de entorno
+load_dotenv()
+BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
+BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE PÁGINA
@@ -16,8 +23,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 1. AUTO-REFRESH (Cada 5 segundos)
-st_autorefresh(interval=5000, key="datarefresh")
+# 1. AUTO-REFRESH (Cada 30 segundos)
+st_autorefresh(interval=30000, key="datarefresh")
 
 # Estilo Premium Dark
 st.markdown("""
@@ -138,6 +145,45 @@ def get_pnl_data():
     except Exception:
         return None
 
+def get_binance_open_positions():
+    """Consulta directamente la API de Binance Futures para posiciones abiertas."""
+    try:
+        if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+            return pd.DataFrame(), "Claves de API Binance no configuradas."
+            
+        client = UMFutures(key=BINANCE_API_KEY, secret=BINANCE_API_SECRET)
+        risk = client.get_position_risk()
+        
+        open_positions = []
+        for p in risk:
+            amt = float(p['positionAmt'])
+            if amt != 0:
+                entry = float(p['entryPrice'])
+                pnl = float(p['unrealizedProfit'])
+                mark = float(p['markPrice'])
+                leverage = float(p['leverage'])
+                roi = (pnl / (entry * abs(amt) / leverage)) * 100 if entry > 0 else 0
+                
+                open_positions.append({
+                    "Symbol": p['symbol'],
+                    "Tipo": "LONG" if amt > 0 else "SHORT",
+                    "Tamaño": abs(amt),
+                    "Entrada": entry,
+                    "Precio Actual": mark,
+                    "PnL ($)": pnl,
+                    "ROI (%)": roi,
+                    "Liq. Price": float(p['liquidationPrice']),
+                    "Leverage": f"{int(leverage)}x"
+                })
+        
+        if not open_positions:
+            return pd.DataFrame(), None
+            
+        df = pd.DataFrame(open_positions).sort_values(by="PnL ($)", ascending=False)
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(), f"Error API Binance: {str(e)}"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LAYOUT & VISUALIZACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -231,6 +277,57 @@ with col5:
         st.caption(f"**24h:** {ia_24h['rate']}% ({ia_24h['validadas']}/{ia_24h['total']})")
     if ia_7d:
         st.caption(f"**7d:** {ia_7d['rate']}% ({ia_7d['validadas']}/{ia_7d['total']})")
+
+st.divider()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NUEVO: POSICIONES ABIERTAS (TIEMPO REAL DIRECTO DE BINANCE)
+# ═══════════════════════════════════════════════════════════════════════════════
+st.subheader("📊 Posiciones Abiertas (Binance Live)")
+
+df_positions, api_error = get_binance_open_positions()
+
+if api_error:
+    st.warning(f"⚠️ {api_error}")
+elif not df_positions.empty:
+    col_p1, col_p2, col_p3 = st.columns(3)
+    pnl_total_live = df_positions['PnL ($)'].sum()
+    roi_promedio = df_positions['ROI (%)'].mean()
+    
+    col_p1.metric("Posiciones Activas", len(df_positions))
+    col_p2.metric(
+        "PnL Flotante (Vivo)", 
+        f"${pnl_total_live:,.2f}", 
+        f"{pnl_total_live:,.2f} USD", 
+        delta_color="normal"
+    )
+    col_p3.metric("ROI Promedio", f"{roi_promedio:.2f}%")
+    
+    st.markdown("Tabla sincronizada directamente con API Binance Futures (Solo lectura).")
+    
+    def color_pnl(val):
+        color = '#00e676' if val > 0 else '#ff1744' if val < 0 else 'grey'
+        return f'color: {color}; font-weight: bold;'
+        
+    try:
+        if hasattr(df_positions.style, 'map'):
+            styled_df = df_positions.style.map(color_pnl, subset=['PnL ($)', 'ROI (%)'])
+        else:
+            styled_df = df_positions.style.applymap(color_pnl, subset=['PnL ($)', 'ROI (%)'])
+            
+        styled_df = styled_df.format({
+            "Entrada": "${:.4f}",
+            "Precio Actual": "${:.4f}",
+            "PnL ($)": "${:.2f}",
+            "ROI (%)": "{:.2f}%",
+            "Liq. Price": "${:.4f}"
+        })
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    except Exception:
+        # Fallback sin estilos de color
+        st.dataframe(df_positions, use_container_width=True, hide_index=True)
+else:
+    st.info("ℹ️ No hay posiciones abiertas corriendo en Binance actualmente.")
 
 st.divider()
 
