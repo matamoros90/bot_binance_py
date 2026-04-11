@@ -150,6 +150,9 @@ TP_DINAMICO_PERCENT = 0.02      # TP reducido a 2% después de X días
 # ═══════════════════════════════════════════════════════════════════════════════
 GUARDIAN_ACTIVO = True          # Activar sistema guardián
 MAX_PERDIDA_PERMITIDA = -0.07   # V3.8: -7% cierre obligatorio (antes -10%)
+CIERRE_POR_REVERSION_ACTIVO = True    # V6.7: Cerrar si retrocede después de ganar
+GANANCIA_MINIMA_PARA_PROTEGER = 0.015  # V6.7: Proteger si alcanzó +1.5% de ganancia
+REVERSION_MAXIMA_PERMITIDA = -0.03     # V6.7: Cerrar si cae más de -3% desde el máximo
 LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes")
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1135,6 +1138,7 @@ def calcular_cantidad(client, symbol, monto_usdt, precio_actual):
 # TRAILING STOP LOSS - FUNCIONES
 # ═══════════════════════════════════════════════════════════════════════════════
 posiciones_tracking = {}  # {symbol: {'side': 'LONG/SHORT', 'best_price': X, 'entry': Y}}
+posiciones_max_ganancia = {}  # V6.7: {symbol: max_pnl_pct} - rastrear máxima ganancia alcanzada
 
 def cancelar_ordenes_sl(client, symbol):
     """V4.0: Solo cancela órdenes STOP_MARKET, PRESERVA Take Profit"""
@@ -1347,8 +1351,9 @@ def guardian_posiciones(client):
     """
     Guardián de emergencia - Monitorea TODAS las posiciones independientemente.
     Cierra automáticamente si la pérdida genera rebases.
+    V6.7: También cierra si una posición fue ganadora y luego se revierta.
     """
-    global _positions_cache
+    global _positions_cache, posiciones_max_ganancia
     if not GUARDIAN_ACTIVO:
         return
     
@@ -1360,6 +1365,9 @@ def guardian_posiciones(client):
             cantidad = float(pos.get('positionAmt', 0))
             
             if cantidad == 0:
+                # Limpiar tracking
+                if symbol in posiciones_max_ganancia:
+                    del posiciones_max_ganancia[symbol]
                 continue
             
             # Calcular PNL porcentual
@@ -1376,6 +1384,49 @@ def guardian_posiciones(client):
             else:
                 pnl_porcentaje = 0
             
+            # ═══════════════════════════════════════════════════════════════════
+            # V6.7: PROTECCIÓN POR REVERSIÓN DE GANANCIAS
+            # ═══════════════════════════════════════════════════════════════════
+            if CIERRE_POR_REVERSION_ACTIVO:
+                # Rastrear máxima ganancia alcanzada para esta posición
+                if symbol not in posiciones_max_ganancia:
+                    posiciones_max_ganancia[symbol] = pnl_porcentaje
+                else:
+                    # Actualizar si es más alta
+                    if pnl_porcentaje > posiciones_max_ganancia[symbol]:
+                        posiciones_max_ganancia[symbol] = pnl_porcentaje
+                
+                max_ganancia = posiciones_max_ganancia[symbol]
+                
+                # Si la posición alcanzó ganancia mínima y ahora está revirtiendo
+                if max_ganancia >= GANANCIA_MINIMA_PARA_PROTEGER:
+                    reversion = pnl_porcentaje - max_ganancia
+                    
+                    # Si retrocedió más de lo permitido desde el máximo
+                    if reversion <= REVERSION_MAXIMA_PERMITIDA:
+                        side = 'SELL' if cantidad > 0 else 'BUY'
+                        
+                        log(f"🛡️ CIERRE POR REVERSIÓN V6.7 ({symbol}): Máx {max_ganancia*100:+.2f}% → Ahora {pnl_porcentaje*100:+.2f}% (caída {reversion*100:.2f}%)")
+                        
+                        try:
+                            client.futures_cancel_all_open_orders(symbol=symbol)
+                            client.futures_create_order(
+                                symbol=symbol,
+                                side=side,
+                                type='MARKET',
+                                quantity=abs(cantidad),
+                                reduceOnly=True
+                            )
+                            
+                            _positions_cache["ts"] = 0.0
+                            log(f"✅ Posición {symbol} cerrada para proteger ganancias. PNL Final: ${unrealized_pnl:.2f}")
+                            stats_semanales["cierres_guardian"] += 1
+                            posiciones_max_ganancia.pop(symbol, None)
+                            
+                        except Exception as e:
+                            log(f"❌ Error cerrando por reversión {symbol}: {e}")
+                        continue
+
             # ═══════════════════════════════════════════════════════════════════
             # MOTOR DE SCALPING DESACTIVADO (V5.16 Elite)
             # ═══════════════════════════════════════════════════════════════════
