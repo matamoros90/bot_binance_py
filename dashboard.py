@@ -185,6 +185,54 @@ def get_binance_open_positions():
     except Exception as e:
         return pd.DataFrame(), f"Error API Binance: {str(e)}"
 
+
+def format_timedelta(td):
+    if td is None:
+        return "-"
+    total_seconds = int(td.total_seconds())
+    if total_seconds < 0:
+        total_seconds = 0
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def get_db_open_trade_info():
+    try:
+        query = """
+            SELECT t.symbol, t.temporalidad, t.timestamp AS opened_at
+            FROM trades t
+            JOIN (
+                SELECT symbol, MAX(id) AS max_id
+                FROM trades
+                WHERE status = 'OPEN'
+                GROUP BY symbol
+            ) latest
+            ON t.symbol = latest.symbol AND t.id = latest.max_id
+        """
+        df = pd.read_sql(query, conn)
+        if df.empty:
+            return pd.DataFrame()
+
+        df['opened_at'] = pd.to_datetime(df['opened_at'])
+        now = datetime.now()
+        df['Temporalidad'] = df['temporalidad'].fillna('N/A')
+        df['Tiempo Abierto'] = df['opened_at'].apply(lambda x: format_timedelta(now - x))
+        max_duration = timedelta(days=5)
+        df['Faltan'] = df['opened_at'].apply(
+            lambda x: format_timedelta(max_duration - (now - x))
+        )
+        return df[['symbol', 'Temporalidad', 'Tiempo Abierto', 'Faltan']]
+    except Exception:
+        return pd.DataFrame()
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LAYOUT & VISUALIZACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -270,10 +318,21 @@ st.divider()
 st.subheader("📊 Posiciones Abiertas (Binance Live)")
 
 df_positions, api_error = get_binance_open_positions()
+open_trade_info = get_db_open_trade_info()
 
 if api_error:
     st.warning(f"⚠️ {api_error}")
 elif not df_positions.empty:
+    if not open_trade_info.empty:
+        df_positions = df_positions.merge(open_trade_info, left_on='Symbol', right_on='symbol', how='left')
+        df_positions = df_positions.drop(columns=['symbol'])
+        column_order = [
+            'Symbol', 'Tipo', 'Temporalidad', 'Tiempo Abierto', 'Faltan',
+            'Tamaño', 'Entrada', 'Precio Actual', 'PnL ($)', 'ROI (%)',
+            'Liq. Price', 'Leverage'
+        ]
+        df_positions = df_positions[[c for c in column_order if c in df_positions.columns]]
+
     col_p1, col_p2, col_p3 = st.columns(3)
     pnl_total_live = df_positions['PnL ($)'].sum()
     roi_promedio = df_positions['ROI (%)'].mean()
@@ -287,7 +346,7 @@ elif not df_positions.empty:
     )
     col_p3.metric("ROI Promedio", f"{roi_promedio:.2f}%")
     
-    st.markdown("Tabla sincronizada directamente con API Binance Futures (Solo lectura).")
+    st.markdown("Tabla sincronizada directamente con API Binance Futures (Solo lectura). Si el trade está registrado en la base de datos, se muestra temporalidad y tiempos asociados.")
     
     def color_pnl(val):
         color = '#00e676' if val > 0 else '#ff1744' if val < 0 else 'grey'
