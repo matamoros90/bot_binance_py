@@ -29,13 +29,13 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V6.1 Elite (IA-Filter Edition)"
-CONFIANZA_MINIMA = 0.70   # V6.3: IA removida, requerimos 70% min para operaciones técnicas
+BOT_VERSION = "V6.2 Elite (Conservative-Filter Edition)"
+CONFIANZA_MINIMA = 0.80   # V6.4: Aumentado a 80% - solo operaciones de ALTA convicción técnica
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
 VELAS_CANTIDAD = 250      # Cantidad de velas a obtener (aumentado para calcular EMA200 segura)
-APALANCAMIENTO = 10       # Modo Sniper x10
+APALANCAMIENTO = 5        # V6.4: Reducido de 10x a 5x - menos slippage, menos riesgo liquidación
 TOP_ACTIVOS = 30          # Activos a analizar por volumen (Aumentado para buscar más oportunidades)
 MAX_POSICIONES = 5        # Máximo 5 posiciones simultáneas para aprovechar el mercado
 
@@ -116,13 +116,12 @@ ATR_SL_MULTIPLICADOR = 2.0          # SL = Precio - (2.0 * ATR) - No usado si AT
 ATR_SL_MINIMO_PERCENT = 0.015       # No usado si ATR_SL_ACTIVO=False
 
 # --- GESTIÓN DE RIESGO SIMPLIFICADA (V6.1) ---
-# V6.1: Eliminado Kelly Criterion por inconsistencia en datos tempranos.
-# Reemplazado por porcentaje FIJO del 2% por operación.
-# Esto es más robusto, predecible y alineado con buenas prácticas institucionales.
-KELLY_ACTIVO = False                # V6.1: DESACTIVADO - Reemplazado por 2% fijo
+# V6.4: Reducido de 2% a 1% para mayor protección del capital.
+# Con apalancamiento reducido (5x), el 1% proporciona más margen de seguridad.
+KELLY_ACTIVO = False                # V6.1: DESACTIVADO - Reemplazado por 1% fijo
 KELLY_FRACCION = 0.5                # No usado (mantenido por compatibilidad)
-KELLY_MINIMO = 0.02                 # No usado
-KELLY_MAXIMO = 0.10                 # No usado
+KELLY_MINIMO = 0.01                 # V6.4: Riesgo mínimo 1%
+KELLY_MAXIMO = 0.05                 # V6.4: Riesgo máximo 5%
 
 # Estadísticas diarias para drawdown y Kelly
 # Se resetean cada día a las 00:00
@@ -734,21 +733,21 @@ def actualizar_stats_trade(pnl):
 # CÁLCULO DE MONTO SIMPLE - 5% FIJO DEL BALANCE
 # ═══════════════════════════════════════════════════════════════════════════════
 def calcular_monto(saldo, confianza=None):
-    """V6.2: Sizing dinámico — usa capital gestionado por CapitalManager si está disponible.
+    """V6.4: Sizing dinámico — usa capital gestionado por CapitalManager si está disponible.
 
     Si el CapitalManager está inicializado (cm no es None), usa su capital operativo
     en lugar del saldo crudo del exchange. Esto permite que el escalado y la protección
     por drawdown afecten el tamaño real de las posiciones.
 
-    En cualquier caso aplica 2% fijo de riesgo por operación.
+    V6.4: Reducido de 2% a 1% fijo de riesgo por operación para mayor protección del capital.
     """
     # Usar capital gestionado si el CapitalManager está activo
     capital_base = cm.get_capital_operativo() if (cm is not None) else saldo
-    monto = capital_base * 0.02  # 2% fijo
+    monto = capital_base * 0.01  # V6.4: Reducido de 2% a 1% - mayor protección
 
     if LOG_DETALLADO:
         origen = "CapMgr" if cm is not None else "exchange"
-        log(f"   💰 Riesgo 2% [{origen}]: Base ${capital_base:.2f} → Monto ${monto:.2f}")
+        log(f"   💰 Riesgo 1% [{origen}]: Base ${capital_base:.2f} → Monto ${monto:.2f}")
 
     return max(1, round(monto, 2))
 
@@ -2296,14 +2295,15 @@ def ejecutar_trading(client, gemini_client):
             return
             
         # ═══════════════════════════════════════════════════════════════════
-        # HIBERNACIÓN SEMANAL (Sniper Mode)
+        # HIBERNACIÓN SEMANAL (Sniper Mode) - V6.4: Aumentado a 30 trades
         # ═══════════════════════════════════════════════════════════════════
         trades_semana = contar_trades_semana_actual()
-        if trades_semana >= 10:
-            log_throttled("hibernacion_semanal", f"💤 HIBERNACIÓN ACTIVA: Límite de {trades_semana}/10 trades semanales alcanzado. Modo Ahorro IA habilitado.", 300)
+        LIMITE_TRADES_SEMANAL = 30  # V6.4: Aumentado de 10 a 30 (filtros son más restrictivos)
+        if trades_semana >= LIMITE_TRADES_SEMANAL:
+            log_throttled("hibernacion_semanal", f"💤 HIBERNACIÓN ACTIVA: Límite de {trades_semana}/{LIMITE_TRADES_SEMANAL} trades semanales alcanzado. Modo Ahorro habilitado.", 300)
             return
         else:
-            log(f"🎯 Operaciones semana actual: {trades_semana}/10 permitidas (Modo Balanceado).")
+            log(f"🎯 Operaciones semana actual: {trades_semana}/{LIMITE_TRADES_SEMANAL} permitidas (Modo Selectivo).")
         
         # Verificar espacios disponibles
         pos_abiertas = contar_posiciones_abiertas(client)
@@ -2391,16 +2391,18 @@ def ejecutar_trading(client, gemini_client):
                 rv = float(ind_actual.get('volumen_relativo', 1))
                 ema200 = float(ind_actual.get('ema200', 0)) if ind_actual.get('ema200') is not None else 0
                 
-                # V6.3: FILTRO INSTITUCIONAL DE LIQUIDEZ MÍNIMA (0.15 STRICT)
-                if rv < 0.15:
+                # V6.4: FILTRO INSTITUCIONAL DE LIQUIDEZ MÍNIMA (0.50 STRICT)
+                # V6.4: Aumentado de 0.15x a 0.50x - rechaza activos sin liquidez como ARIAUSDT
+                if rv < 0.50:
                     if LOG_DETALLADO:
-                        log(f"   🚫 RECHAZADO: Bajo volumen (RV {rv:.2f}x < 0.15x)")
+                        log(f"   🚫 RECHAZADO: Bajo volumen (RV {rv:.2f}x < 0.50x - SIN LIQUIDEZ INSTITUCIONAL)")
                     continue
                 
-                # Skip ESTRICTO si RSI en lateralidad (45-55) sin importar la tendencia
-                if 45 <= rsi <= 55:
+                # V6.4: Skip ESTRICTO si RSI en zona neutra (40-60) - ampliado de 45-55
+                # Rechaza operaciones sin tendencia clara definida
+                if 40 <= rsi <= 60:
                     if LOG_DETALLADO:
-                        log(f"   🚫 RECHAZADO: Lateralidad (RSI {rsi:.0f} sin dirección clara)")
+                        log(f"   🚫 RECHAZADO: Zona neutra/lateral (RSI {rsi:.0f} entre 40-60 - SIN DIRECCIÓN)")
                     continue
                 
                 # ═══════════════════════════════════════════════════════════════════
@@ -2432,18 +2434,18 @@ def ejecutar_trading(client, gemini_client):
                     continue
 
                 # ═══════════════════════════════════════════════════════════════════
-                # PRE-FILTRO TÉCNICO (RSI)
+                # PRE-FILTRO TÉCNICO (RSI) - V6.4: MÁS RESTRICTIVO
                 # ═══════════════════════════════════════════════════════════════════
                 rsi_valido = False
                 
                 if accion == "LONG":
-                    rsi_valido = (rsi <= 45)
+                    rsi_valido = (rsi <= 40)  # V6.4: Reducido de 45 a 40 (más oversold)
                 elif accion == "SHORT":
-                    rsi_valido = (rsi >= 55)
+                    rsi_valido = (rsi >= 60)  # V6.4: Aumentado de 55 a 60 (más overbought)
 
                 if not rsi_valido:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f})")
+                        log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f}) - No cumple extremo requerido")
                     continue
 
                 # V6.1: Contar señal técnica generada (antes del filtro IA)
