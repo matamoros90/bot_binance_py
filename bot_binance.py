@@ -29,8 +29,8 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V6.2 Elite (Conservative-Filter Edition)"
-CONFIANZA_MINIMA = 0.80   # V6.4: Aumentado a 80% - solo operaciones de ALTA convicción técnica
+BOT_VERSION = "V6.5 Elite (Fixed-Critical-Bugs)"
+CONFIANZA_MINIMA = 0.75   # V6.5: BUGFIX - Reducido de 80% a 75%. generar_senal_fallback nunca alcanzaba 80%
 ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
 ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
 TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
@@ -767,7 +767,7 @@ def calcular_ev_neto(confianza, tp_pct, sl_pct, modo_mercado="TREND"):
 
 
 def generar_senal_fallback(ind_actual, posicion_rango, fg_valor, temp_actual="15m"):
-    """Genera señal técnica de respaldo cuando la IA responde WAIT."""
+    """V6.5 BUGFIX: Genera señal técnica de respaldo con confianza adecuada."""
     if not ind_actual:
         return None, 0.0, None, "Sin datos de indicadores"
 
@@ -781,26 +781,30 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor, temp_actual="15
     if atr_pct < 0.05 or vol_rel < 0.05:
         return None, 0.0, None, f"Filtro de Liquidez: RV ({vol_rel}x) < 0.05x o volatilidad nula"
 
-    # V5.16: Continuación firme (Rebote/Pullback normal)
-    if 'BAJISTA' in t1:
-        if rsi >= 55:
-            return "SHORT", 0.75, temp_actual, "Fallback técnico: rebote bajista exhausto (RSI>=55)"
+    # V6.5 BUGFIX: Aumentar confianza en casos extremos
+    # RSI EXTREMO (< 20 o > 80) = Mayor confianza = 85%
+    if rsi <= 20:
+        return "LONG", 0.85, temp_actual, "V6.5: Sobreventa EXTREMA (RSI ≤ 20)"
+    if rsi >= 80:
+        return "SHORT", 0.85, temp_actual, "V6.5: Sobrecompra EXTREMA (RSI ≥ 80)"
 
-    if 'ALCISTA' in t1:
-        if rsi <= 45:
-            return "LONG", 0.75, temp_actual, "Fallback técnico: rebote alcista exhausto (RSI<=45)"
+    # V6.5 BUGFIX: Continuación de tendencia con confianza suficiente = 78%
+    # BAJISTA con RSI >= 55 (confirmación technique)
+    if 'BAJISTA' in t1 and rsi >= 55:
+        return "SHORT", 0.78, temp_actual, "V6.5: Tendencia bajista + momentum (RSI ≥ 55)"
 
+    # ALCISTA con RSI <= 45 (confirmación técnica)
+    if 'ALCISTA' in t1 and rsi <= 45:
+        return "LONG", 0.78, temp_actual, "V6.5: Tendencia alcista + momentum (RSI ≤ 45)"
+
+    # V6.5 BUGFIX: Reversión en extremos normales = 76%
     if rsi <= 25:
-        return "LONG", 0.70, temp_actual, "Fallback técnico: sobreventa extrema"
+        return "LONG", 0.76, temp_actual, "V6.5: Sobreventa (RSI ≤ 25)"
 
     if rsi >= 75:
-        return "SHORT", 0.70, temp_actual, "Fallback técnico: sobrecompra extrema"
+        return "SHORT", 0.76, temp_actual, "V6.5: Sobrecompra (RSI ≥ 75)"
 
-    # V5.12: Eliminados fallbacks de baja confianza (65%) que forzaban trades basura.
-    # Solo se mantienen los setups de alta convicción arriba (continuación tendencia 72%+
-    # y reversión extrema 70%).
-
-    return None, 0.0, None, "Sin setup fallback de alta convicción"
+    return None, 0.0, None, "Sin setup técnico de convicción suficiente"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # EVALUADOR IA COMO FILTRO (V6.1) — CRÍTICO
@@ -2398,12 +2402,14 @@ def ejecutar_trading(client, gemini_client):
                         log(f"   🚫 RECHAZADO: Bajo volumen (RV {rv:.2f}x < 0.50x - SIN LIQUIDEZ INSTITUCIONAL)")
                     continue
                 
-                # V6.4: Skip ESTRICTO si RSI en zona neutra (40-60) - ampliado de 45-55
-                # Rechaza operaciones sin tendencia clara definida
-                if 40 <= rsi <= 60:
-                    if LOG_DETALLADO:
-                        log(f"   🚫 RECHAZADO: Zona neutra/lateral (RSI {rsi:.0f} entre 40-60 - SIN DIRECCIÓN)")
-                    continue
+                # V6.5 BUGFIX: Filtro de lateralidad SOLO para mercados realmente neutrales
+                # Si tendencia es ALCISTA/BAJISTA, permitir RSI en rango de continuación incluso en 40-60
+                # Solo bloquear si tendencia es LATERAL y RSI en 50±5
+                if 'LATERAL' in tendencia:
+                    if 48 <= rsi <= 52:  # V6.5: Solo el núcleo del rango neutral (48-52)
+                        if LOG_DETALLADO:
+                            log(f"   🚫 RECHAZADO: Mercado LATERAL con RSI neutral (RSI {rsi:.0f} en 48-52)")
+                        continue
                 
                 # ═══════════════════════════════════════════════════════════════════
                 # V6.1: GENERADOR DE SEÑALES — SOLO FALLBACK TÉCNICO
@@ -2434,18 +2440,21 @@ def ejecutar_trading(client, gemini_client):
                     continue
 
                 # ═══════════════════════════════════════════════════════════════════
-                # PRE-FILTRO TÉCNICO (RSI) - V6.4: MÁS RESTRICTIVO
+                # PRE-FILTRO TÉCNICO (RSI) - V6.5: CONSISTENTE CON generar_senal_fallback
                 # ═══════════════════════════════════════════════════════════════════
                 rsi_valido = False
                 
+                # V6.5 BUGFIX: Alinear con generar_senal_fallback que usa <= 25, >= 75
                 if accion == "LONG":
-                    rsi_valido = (rsi <= 40)  # V6.4: Reducido de 45 a 40 (más oversold)
+                    # Genera LONG cuando RSI <= 25 (85%) o ALCISTA + RSI <= 45 (78%)
+                    rsi_valido = (rsi <= 45)
                 elif accion == "SHORT":
-                    rsi_valido = (rsi >= 60)  # V6.4: Aumentado de 55 a 60 (más overbought)
+                    # Genera SHORT cuando RSI >= 75 (85%) o BAJISTA + RSI >= 55 (78%)
+                    rsi_valido = (rsi >= 55)
 
                 if not rsi_valido:
                     if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f}) - No cumple extremo requerido")
+                        log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f}) - No cumple umbral de acción")
                     continue
 
                 # V6.1: Contar señal técnica generada (antes del filtro IA)

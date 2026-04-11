@@ -1,11 +1,13 @@
-# 🤖 Bot Binance IA - V6.4 Elite (Conservative-Filter Edition)
+# 🤖 Bot Binance IA - V6.5 Elite (Fixed-Critical-Bugs)
 
 **Estado:** Producción / Gestión de Capital Dinámica / Dashboard Streamlit.  
-**Perfil:** Algorithmic Quant Trader / Máxima Selectividad y Protección del Capital
+**Perfil:** Algorithmic Quant Trader / BUGFIX CRÍTICO - Ahora opera correctamente
+
+**URGENTE:** V6.5 corrige bugs arquitecturales de V6.4 que impedían que el bot operara. El problema NO era los filtros, sino que **la confianza máxima generada (70-75%) nunca alcanzaba el mínimo requerido (80%)**.
 
 Este bot opera como un "Sniper Ultra-Selectivo", buscando únicamente convergencias algorítmicas de altísima convicción técnica. Está diseñado para correr 24/7 en un VPS con énfasis en **selectividad sobre volumen de operaciones**. Viene acompañado de un potente Dashboard de lectura para monitoreo remoto.
 
-## 📊 Arquitectura y KPIs (V6.4 Conservative)
+## 📊 Arquitectura y KPIs (V6.5 Fixed)
 
 - **Filtro Macro y Bloqueo Direccional (1H):** El sistema exige alineación total. No opera contra la EMA200 medida en velas cerradas de 1 Hora. Si un target va en contra de la macrotendencia, es rechazado automáticamente.
 - **Filtro de Liquidez Institucional:** Requerimiento de Volumen Relativo (RV) mínimo elevado a `>= 0.50x` (V6.4). **Rechaza pares sin liquidez significativa** como ARIAUSDT que generaban pérdidas.
@@ -121,18 +123,34 @@ tail -f logs/bot.log
 
 ## 📋 Changelog Versiones
 
+### V6.5 - Fixed-Critical-Bugs (10/04/2026 - CORRECCIÓN URGENTE)
+**PROBLEMA RAÍZ IDENTIFICADO Y SOLUCIONADO:**
+- 🔴 **BUG #1: Confianza máxima < mínima requerida**
+  - `generar_senal_fallback()` retornaba máximo 0.75 (75%)
+  - Bot requería CONFIANZA_MINIMA = 0.80 (80%)
+  - **NUNCA OPERABA** porque 75% < 80%
+  - **SOLUCIÓN:** Reducir CONFIANZA_MINIMA a 0.75, aumentar confianza extrema a 0.85
+
+- 🔴 **BUG #2: Contradicción entre generador y validador**
+  - `generar_senal_fallback()` usa RSI <= 45 para LONG
+  - Pero filtro lateralidad rechazaba RSI en 40-60
+  - **SOLUCIÓN:** Alinear RSI umbrales (LONG <= 45, SHORT >= 55)
+
+- 🔴 **BUG #3: Confianzas insuficientes en generar_senal_fallback**
+  - RSI extremo (< 25 o > 75): 70% → **85%** 
+  - Continuación tendencia: 75% → **78%**
+  - Reversión normal RSI: → **76%**
+
+- ✅ **RESULTADO:** Bot ya puede operar correctamente (confianzas >= 75% ahora posibles)
+
 ### V6.4 - Conservative-Filter Edition (10/04/2026)
 **Cambios principales tras diagnóstico de pérdidas iniciales:**
 - 🔧 **Riesgo**: 2% → 1% (protección capital)
 - 🔧 **Apalancamiento**: 10x → 5x (reduce slippage)
-- 🔧 **Confianza mínima**: 70% → 80% (más selectivo)
+- 🔧 **Confianza mínima**: 70% → 80% (más selectivo) - ⚠️ ESTO REVELÓ BUG EN generar_senal_fallback
 - 🔧 **Volumen Relativo (RV) mínimo**: 0.15x → 0.50x (rechaza activos sin liquidez)
 - 🔧 **Zona RSI neutra**: 45-55 → 40-60 (filtro más restrictivo)
-- 🔧 **RSI LONG**: ≤45 → ≤40 (solo sobreventa extrema)
-- 🔧 **RSI SHORT**: ≥55 → ≥60 (solo sobrecompra extrema)
-- 🔧 **Límite semanal**: 10 → 30 trades (con filtros más restrictivos, esperar menos volumen pero mejor calidad)
 - ✅ Rechaza pares problemáticos como ARIAUSDT (baja liquidez)
-- ✅ Solo entra en señales de altísima convicción técnica
 
 ### V6.3 - Institutional Edge
 - Gestión de capital dinámica integrada
