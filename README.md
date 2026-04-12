@@ -122,6 +122,32 @@ tail -f logs/bot.log
 
 ## 📋 Changelog Versiones
 
+### V6.7.1 - Bugfix Crítico (12/04/2026 - 4 ERRORES SILENCIOSOS ELIMINADOS)
+
+**Bugs identificados en logs de producción y corregidos:**
+
+#### 🐛 Bug #1 — `max_drawdown referenced before assignment` (CRASH en cada trade)
+- **Archivo:** `persistence.py` — función `calcular_metricas_riesgo()`
+- **Causa:** Variable `max_drawdown` usada sin inicializar. El nombre correcto era `max_dd`.  
+- **Efecto:** Error en **cada cierre de trade**, CapitalManager se corrompía y no actualizaba capital.
+- **Fix:** ✅ Renombrada referencia incorrecta → `max_dd`.
+
+#### 🐛 Bug #2 — `RESERVA DE CAPITAL INTACTA: Operaciones bloqueadas` (Bot inoperativo)
+- **Causa:** `ESCUDO_SEGURO = 0.95` exigía que el margen libre fuera >95% del balance total para operar. Con posiciones abiertas usando margen, esto es **matemáticamente imposible** → el bot bloqueaba TODAS las nuevas operaciones.  
+- **Efecto:** Después de abrir las primeras posiciones, el bot quedaba paralizado indefinidamente.
+- **Fix:** ✅ Escudo de margen libre comentado. La protección real la ejerce el Guardián (-7% por posición).
+
+#### 🐛 Bug #3 — `RECHAZADO POR RSI` en señales ya validadas (Doble filtro)
+- **Causa:** Existía un segundo filtro RSI dentro de la función de ejecución (más restrictivo: LONG RSI ≤45, SHORT RSI ≥55) que rechazaba señales que `generar_senal_fallback()` ya había aprobado con criterios más amplios (MACD, RSI ≤65).
+- **Efecto:** Señales válidas como `ETHUSDT LONG (MACD positivo)` o `RAVEUSDT LONG (Tendencia ALCISTA)` eran silenciadas luego de haber pasado el primer filtro.
+- **Fix:** ✅ Eliminado el doble filtro. La validación ya viene incorporada en `generar_senal_fallback()`.
+
+#### 🐛 Bug #4 — `CIERRE POR REVERSIÓN` cerrando posiciones ganadoras en pérdida
+- **Causa:** `GANANCIA_MINIMA_PARA_PROTEGER = 0.015` (1.5%) se activaba muy pronto con 10x de apalancamiento y `REVERSION_MAXIMA_PERMITIDA = -0.03` era demasiado sensible para scalping. Ejemplo real: `TRADOORUSDT` fue cerrada con PNL `-$1.11` cuando había alcanzado +$2.79 (+6.29% máximo).
+- **Fix:** ✅ Umbral de protección subido a `GANANCIA_MINIMA_PARA_PROTEGER = 0.05` (5%). Reversión tolerada hasta `-0.06` (-6% desde máximo) antes de cerrar.
+
+---
+
 ### V6.7 - Aggressive Scalper (12/04/2026 - CAMBIO DE PARADIGMA)
 **Pivote a Alta Frecuencia:**
 - Cambio de estrategia extrema: de Sniper a Cazador por volumen diario.
