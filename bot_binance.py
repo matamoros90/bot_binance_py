@@ -31,15 +31,15 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL - TRADING ACTIVO CON TRAILING SL + FUNDING PROTECTION
 # ═══════════════════════════════════════════════════════════════════════════════
 USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "yes")
-BOT_VERSION = "V6.6 Elite (Complete-Rewrite)"
-CONFIANZA_MINIMA = 0.74   # V6.6: generar_senal_fallback retorna 74-88% - todas las señales son alcanzables
-ESCUDO_TRABAJO = 0.20     # BÚNKER: 80% bloqueado, solo el 20% del balance está disponible para operaciones
-ESCUDO_SEGURO = 0.80      # 80% real de reserva, detiene al bot si el balance baja a este nivel
-TIEMPO_POR_ACTIVO = 10    # Segundos entre análisis de cada activo
-VELAS_CANTIDAD = 250      # Cantidad de velas a obtener (aumentado para calcular EMA200 segura)
-APALANCAMIENTO = 5        # V6.4: Reducido de 10x a 5x - menos slippage, menos riesgo liquidación
-TOP_ACTIVOS = 30          # Activos a analizar por volumen (Aumentado para buscar más oportunidades)
-MAX_POSICIONES = 5        # Máximo 5 posiciones simultáneas para aprovechar el mercado
+BOT_VERSION = "V6.7 Aggressive Scalper"
+CONFIANZA_MINIMA = 0.45   # Modificado para no rechazar trades
+ESCUDO_TRABAJO = 0.05     # 95% disponible
+ESCUDO_SEGURO = 0.95      # 5% disponible (aunque se gestiona según balance)
+TIEMPO_POR_ACTIVO = 5     # 5 segundos para más velocidad
+VELAS_CANTIDAD = 250      
+APALANCAMIENTO = 10       # Apalancamiento alto para aprovechar trades pequeños
+TOP_ACTIVOS = 50          # Buscar en los top 50
+MAX_POSICIONES = 10       # Hasta 10 posiciones simultáneas para aprovechar todo
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRAILING STOP LOSS CONFIGURACIÓN
@@ -158,30 +158,32 @@ LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEMPORALIDADES DINÁMICAS
 # ═══════════════════════════════════════════════════════════════════════════════
-TEMPORALIDADES = ['15m', '1h']  # V6.0: Escala Institucional excluyendo el "ruido" de la volatilidad Intradía menor
+TEMPORALIDADES = ['5m', '15m']  # Temporalidades rápidas para alta frecuencia
 
-# V6.0: Ajuste de Scalping para temporalidad de 1H
+# TP/SL muy cortos para salir rápido en ganancias
 TP_SL_CONFIG = {
-    "1h":  {"tp": 0.085, "sl": 0.035},    # Sniper Mode V6.0: +8.5%, -3.5%
+    "1h":  {"tp": 0.040, "sl": 0.020},
+    "15m": {"tp": 0.020, "sl": 0.010},
+    "5m":  {"tp": 0.010, "sl": 0.005},
 }
 
-# V6.0: Modo rango
 TP_SL_RANGO_CONFIG = {
-    "1h":  {"tp": 0.020, "sl": 0.010},     # V6.0: +2.0%, -1.0%
+    "1h":  {"tp": 0.020, "sl": 0.010},
+    "15m": {"tp": 0.010, "sl": 0.005},
+    "5m":  {"tp": 0.006, "sl": 0.003},
 }
-FACTOR_MONTO_RANGO = 0.70         # Reducir exposición en mercado lateral
+FACTOR_MONTO_RANGO = 1.0         # Sin reducción en lateral
 
-# V6.1: Filtro financiero mínimo por operación (EV neto) — ACTIVADO
-FEE_ROUNDTRIP_EST = 0.0012        # 0.12% estimado ida+vuelta Binance Futures
-SLIPPAGE_EST = 0.0006             # 0.06% slippage conservador
-EV_MINIMO = 0.001                 # V6.6: Reducido de 0.2% a 0.1% - menos restrictivo, más operaciones viables
+FEE_ROUNDTRIP_EST = 0.0012        
+SLIPPAGE_EST = 0.0006             
+EV_MINIMO = -10.0                 # EV en negativo para que no bloquee ninguna operacion
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN IA MODO FILTRO (V6.1) — CRÍTICO
 # ═══════════════════════════════════════════════════════════════════════════════
 # La IA ya NO genera señales (LONG/SHORT). Solo VALIDA o RECHAZA señales técnicas.
 # El generador de señales es exclusivamente el fallback técnico (generar_senal_fallback).
-USAR_IA = True      # True = usar Gemini como filtro. False = ejecutar señal técnica directamente
+USAR_IA = False      # True = usar Gemini como filtro. False = ejecutar señal técnica directamente
 IA_MODO = "FILTRO"  # "FILTRO" = Gemini valida señales técnicas. NO cambiar a otro valor.
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -748,7 +750,7 @@ def calcular_monto(saldo, confianza=None):
     """
     # Usar capital gestionado si el CapitalManager está activo
     capital_base = cm.get_capital_operativo() if (cm is not None) else saldo
-    monto = capital_base * 0.01  # V6.4: Reducido de 2% a 1% - mayor protección
+    monto = capital_base * 0.05  # Aumentado al 5% para que puedan generar $1 más rápido
 
     if LOG_DETALLADO:
         origen = "CapMgr" if cm is not None else "exchange"
@@ -787,55 +789,33 @@ def generar_senal_fallback(ind_actual, posicion_rango, fg_valor, temp_actual="15
     vol_rel = float(ind_actual.get('volumen_relativo', 1))
 
     # ==============================================================
-    # NIVELES DE CONFIANZA DEFINITIVOS (V6.6)
+    # NIVELES DE CONFIANZA AGRESIVOS PARA MÁS SEÑALES
     # ==============================================================
     
-    # EXTREMOS ABSOLUTOS - Mayor confianza
-    if rsi <= 20:  # Sobreventa extrema
-        return "LONG", 0.88, temp_actual, "Sobreventa EXTREMA (RSI ≤ 20)"
-    if rsi >= 80:  # Sobrecompra extrema
-        return "SHORT", 0.88, temp_actual, "Sobrecompra EXTREMA (RSI ≥ 80)"
+    # RSI en todos los rangos permisivos
+    if rsi <= 35:
+        return "LONG", 0.90, temp_actual, "Sobreventa RSI (≤ 35)"
+    if rsi >= 65:
+        return "SHORT", 0.90, temp_actual, "Sobrecompra RSI (≥ 65)"
     
-    # TENDENCIA FUERTE ALCISTA + RSI bajo = Continuación alcista
-    if 'ALCISTA_FUERTE' in t1 and rsi <= 40:
-        return "LONG", 0.86, temp_actual, "Tendencia ALCISTA FUERTE + RSI bajo"
+    if 'ALCISTA' in t1 and rsi <= 55:
+        return "LONG", 0.85, temp_actual, "Tendencia ALCISTA + RSI permisivo"
     
-    # TENDENCIA FUERTE BAJISTA + RSI alto = Continuación bajista
-    if 'BAJISTA_FUERTE' in t1 and rsi >= 60:
-        return "SHORT", 0.86, temp_actual, "Tendencia BAJISTA FUERTE + RSI alto"
+    if 'BAJISTA' in t1 and rsi >= 45:
+        return "SHORT", 0.85, temp_actual, "Tendencia BAJISTA + RSI permisivo"
     
-    # TENDENCIA ALCISTA moderada + RSI confirmación
-    if 'ALCISTA' in t1:
-        if rsi <= 35:
-            return "LONG", 0.84, temp_actual, "Tendencia ALCISTA + RSI bajo (35)"
-        elif rsi <= 45:
-            return "LONG", 0.80, temp_actual, "Tendencia ALCISTA + RSI medio-bajo"
-        elif rsi <= 55 and macd_hist > 0:
-            return "LONG", 0.76, temp_actual, "Tendencia ALCISTA + MACD positivo"
+    if macd_hist > 0 and rsi < 65:
+        return "LONG", 0.75, temp_actual, "MACD positivo"
     
-    # TENDENCIA BAJISTA moderada + RSI confirmación
-    if 'BAJISTA' in t1:
-        if rsi >= 65:
-            return "SHORT", 0.84, temp_actual, "Tendencia BAJISTA + RSI alto (65)"
-        elif rsi >= 55:
-            return "SHORT", 0.80, temp_actual, "Tendencia BAJISTA + RSI medio-alto"
-        elif rsi >= 45 and macd_hist < 0:
-            return "SHORT", 0.76, temp_actual, "Tendencia BAJISTA + MACD negativo"
+    if macd_hist < 0 and rsi > 35:
+        return "SHORT", 0.75, temp_actual, "MACD negativo"
     
-    # REVERSIONES en rangos intermedios (suavemente alcistas/bajistas)
-    if rsi <= 25:
-        return "LONG", 0.78, temp_actual, "RSI en sobreventa (25)"
-    if rsi >= 75:
-        return "SHORT", 0.78, temp_actual, "RSI en sobrecompra (75)"
-    
-    # CONFIRMACIÓN DE MACD cuando no hay tendencia clara
-    if 'LATERAL' not in t1:  # Hay algo de tendencia
-        if macd_hist > 0.0001 and rsi < 60:
-            return "LONG", 0.74, temp_actual, "MACD cruzó positivo + RSI aceptable"
-        if macd_hist < -0.0001 and rsi > 40:
-            return "SHORT", 0.74, temp_actual, "MACD cruzó negativo + RSI aceptable"
-    
-    # Si nada se cumple: No hay setup
+    # En caso de ruido pero sin tendencia fuerte, seguir MACD básico
+    if macd_hist > 0:
+        return "LONG", 0.50, temp_actual, "Cruce MACD Alcista"
+    if macd_hist < 0:
+        return "SHORT", 0.50, temp_actual, "Cruce MACD Bajista"
+
     return None, 0.0, None, "Sin setup técnico válido"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2342,13 +2322,13 @@ def ejecutar_trading(client, gemini_client):
     global _ia_senales_total, _ia_senales_validadas, USAR_IA, _ia_cooldown_hasta, _ia_fallos_consecutivos
 
     # ═══════════════════════════════════════════════════════════════════
-    # CHECK COOLDOWN DE LA IA
+    # CHECK COOLDOWN DE LA IA (DESACTIVADO PARA OPERACIÓN 100% TÉCNICA)
     # ═══════════════════════════════════════════════════════════════════
-    if not USAR_IA and _ia_cooldown_hasta > 0 and time.time() >= _ia_cooldown_hasta:
-        USAR_IA = True
-        _ia_cooldown_hasta = 0.0
-        _ia_fallos_consecutivos = 0
-        log("✅ [IA] Reactivada tras cooldown de 15 minutos")
+    # if not USAR_IA and _ia_cooldown_hasta > 0 and time.time() >= _ia_cooldown_hasta:
+    #     USAR_IA = True
+    #     _ia_cooldown_hasta = 0.0
+    #     _ia_fallos_consecutivos = 0
+    #     log("✅ [IA] Reactivada tras cooldown de 15 minutos")
 
     _ia_requests_ciclo = 0
 
@@ -2382,7 +2362,7 @@ def ejecutar_trading(client, gemini_client):
         # HIBERNACIÓN SEMANAL (Sniper Mode) - V6.4: Aumentado a 30 trades
         # ═══════════════════════════════════════════════════════════════════
         trades_semana = contar_trades_semana_actual()
-        LIMITE_TRADES_SEMANAL = 30  # V6.4: Aumentado de 10 a 30 (filtros son más restrictivos)
+        LIMITE_TRADES_SEMANAL = 9999  # V6.7: Aumentado a 9999 para operativa agresiva
         if trades_semana >= LIMITE_TRADES_SEMANAL:
             log_throttled("hibernacion_semanal", f"💤 HIBERNACIÓN ACTIVA: Límite de {trades_semana}/{LIMITE_TRADES_SEMANAL} trades semanales alcanzado. Modo Ahorro habilitado.", 300)
             return
@@ -2876,13 +2856,13 @@ while True:
         puede_operar = verificar_drawdown_diario(balance_equity)
         
         # ═════════════════════════════════════════════════════════════════════
-        # V6.1: CIRCUIT BREAKER IA — Reactivación automática
+        # V6.1: CIRCUIT BREAKER IA — Reactivación automática (DESACTIVADO)
         # Si USAR_IA fue desactivado por fallos y el contador ya se reseteó
         # (porque hubo una respuesta válida), volver a activar.
         # ═════════════════════════════════════════════════════════════════════
-        if not USAR_IA and _ia_fallos_consecutivos == 0:
-            USAR_IA = True
-            log("🟢 [IA-CIRCUIT-BREAKER] Filtro IA REACTIVADO — sin fallos consecutivos detectados.")
+        # if not USAR_IA and _ia_fallos_consecutivos == 0:
+        #     USAR_IA = True
+        #     log("🟢 [IA-CIRCUIT-BREAKER] Filtro IA REACTIVADO — sin fallos consecutivos detectados.")
 
         # ═════════════════════════════════════════════════════════════════════
         # SCHEDULER OPERATIVO - control de carga CPU/API

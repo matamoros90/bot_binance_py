@@ -1,33 +1,30 @@
-# 🤖 Bot Binance IA - V6.6 Elite (Complete-Rewrite)
+# 🤖 Bot Binance - V6.7 Aggressive Scalper (Alta Frecuencia)
 
-**Estado:** Producción / Gestión de Capital Dinámica / Dashboard Streamlit.  
-**Perfil:** Algorithmic Quant Trader / ANÁLISIS PROFUNDO + SOLUCIÓN DEFINITIVA
+**Estado:** Producción / Operativa Técnica Pura / Dashboard Streamlit.  
+**Perfil:** Algorithmic High-Frequency Scalper / RIESGO ASIMÉTRICO / 100% MATEMÁTICO
 
-**PROBLEMA: 2 SEMANAS SIN OPERAR - SOLUCIONADO**
+**NUEVO ENFOQUE: SCALPING AGRESIVO - OPORTUNIDADES RÁPIDAS**
 
-El bot estaba bloqueado porque `generar_senal_fallback()` NUNCA generaba señales viables. Sólo retornaba señales en casos EXTREMOS (RSI <20 o >80). V6.6 reescribió completamente esta función para que genere señales en MÚLTIPLES escenarios realistas.
+El bot fue reconfigurado drásticamente de su estado restrictivo (que pasaba horas o semanas sin operar) a un modo de "Cazador de Micro-Movimientos". Ahora aprovecha cruces de RSI y MACD mucho más permisivos para llevar a cabo una multitud de micro-transacciones diarias buscando rentabilidades inmediatas (TPs bajísimos).
 
-Este bot opera como un "Sniper Ultra-Selectivo", buscando únicamente convergencias algorítmicas de altísima convicción técnica. Está diseñado para correr 24/7 en un VPS con énfasis en **selectividad sobre volumen de operaciones**. Viene acompañado de un potente Dashboard de lectura para monitoreo remoto.
+Se ha **erradicado por completo a la IA Gemini** del ciclo de decisiones, garantizando latencia ultra-baja y puramente lógica matemática sin reactivaciones "zombies" de IA.
 
-## 📊 Arquitectura y KPIs (V6.5 Fixed)
+## 📊 Arquitectura y KPIs (V6.7 Aggressive Scalper)
 
-- **Filtro Macro y Bloqueo Direccional (1H):** El sistema exige alineación total. No opera contra la EMA200 medida en velas cerradas de 1 Hora. Si un target va en contra de la macrotendencia, es rechazado automáticamente.
-- **Filtro de Liquidez Institucional:** Requerimiento de Volumen Relativo (RV) mínimo elevado a `>= 0.50x` (V6.4). **Rechaza pares sin liquidez significativa** como ARIAUSDT que generaban pérdidas.
-- **Filtro de Lateralidad Extrema:** Bloqueo absoluto si RSI está en zona neutra (40 - 60). Solo entra si RSI < 40 (LONG sobreventa) o RSI > 60 (SHORT sobrecompra).
-- **Confianza Técnica Mínima:** Aumentada a **80%** (V6.4, antes 70%). Rechaza señales débiles.
-- **Trading Técnico Puro:** Estrategia basada en indicadores paramétricos (EMA200 macro 1H, RSI, ATR, Bollinger) en temporalidades limpias (1H y 15m).
-- **Circuit Breakers Asíncronos:** Desactiva llamadas al API en caso de timeouts para evitar latencias.
+- **Acelerador de Temporalidad (5m/15m):** El sistema escanea en ventanas sumamente rápidas (5 minutos y 15 minutos) para reaccionar a fluctuaciones intratiempo cortas en las criptomonedas y no esperar tendencias macro.
+- **Tolerancia Técnica Extrema:** Mínima confianza requerida de **45%** (RSI permisivos y MACD con cruce simple). Aceptando señales sub-óptimas si existen indicios de dirección a favor.
+- **Micro-Toma de Ganancias (Micro-TPs):** Configurado con TPs como 0.6% ó 1.0%. En lugar de esperar 8% de un trade prolongado, liquida operaciones el mismo minuto si tocan un centavo arriba.
+- **Pérdida Esperada Ignorada (EV < 0 Permitido):** Tolerancia máxima al slippage; si hay una señal operable, se ejecuta de inmediato sin rechazarla por cálculo conservador de fees.
+- **Trading Matemático Puro (No Gemini):** Gemini ha sido inhabilitado al 100%, eliminando circuit breakers resurrectores. Toda la confianza depositada en RSI + MACD + ATR.
 
-## 🛡️ Gestión de Riesgo Institucional (V6.4 - Potenciada)
+## 🛡️ Gestión de Riesgo Ofensiva (V6.7)
 
-Todo el tamaño posicional está controlado por protecciones multicapa:
+Todo el tamaño posicional se potenció para exprimir las pequeñas ventajas en el mercado y generar dólares reales:
 
-- **Riesgo Ultra-Conservador:** Reducido a **1%** por cada operación (V6.4, antes 2%).
-- **Apalancamiento Reducido:** De 10x a **5x** (V6.4) — menor slippage, menor riesgo de liquidación.
-- **Defensa de Posición (Break-Even):** Candado algorítmico que arrastra SL al +0.1% casi inmediatamente si se toca +0.6% ROI.
-- **Acoso Dinámico (Trailing SL 1%):** Al llegar a +1.0% de ganancia, trailing stop automático.
-- **Drawdown Cooldown:** Pausa técnica (8h) si se cruza 20% de drawdown máximo.
-- **Límite Semanal:** Aumentado a **30 trades máx/semana** (V6.4, antes 10). Con filtros más restrictivos, se espera menos volumen pero mejor calidad.
+- **Riesgo Asignado por Trade:** Aumentado significativamente al **5%** por cada operación para darle peso económico a TPs minúsculos.
+- **Apalancamiento Potenciado:** Subido a **10x** para amplificar el pnl por cada micro-movimiento porcentual.
+- **Exposición Multivariada:** Capacidad para abrir hasta **10 posiciones simultáneas**, esparciendo el riesgo entre los top 50 activos de mayor volumen.
+- **Guardián Activo:** Aunque es ultra frecuente, el Stop-Loss y Break-Even se ejecutan velozmente ante cualquier reversión drástica o error de la tendencia.
 
 ## 🎯 Cambios V6.4 - Optimización por Pérdidas
 
@@ -124,6 +121,15 @@ tail -f logs/bot.log
 ```
 
 ## 📋 Changelog Versiones
+
+### V6.7 - Aggressive Scalper (12/04/2026 - CAMBIO DE PARADIGMA)
+**Pivote a Alta Frecuencia:**
+- Cambio de estrategia extrema: de Sniper a Cazador por volumen diario.
+- Eliminación total del Zombie de IA Gemini (falsa reactivación neutralizada).
+- Temporalidades bajadas a `5m/15m`.
+- Apalancamiento al `10x` y exposición al `5%`.
+- Parámetros de Take Profit Ultra cortos (0.6% a 1.0%).
+- Reducción del requerimiento de confianza técnica al 45%, EV mínimo anulado.
 
 ### V6.6 - Complete-Rewrite (10/04/2026 - SOLUCIÓN DEFINITIVA)
 **ANÁLISIS EXHAUSTIVO REVELÓ PROBLEMA ARQUITECTÓNICO:**
