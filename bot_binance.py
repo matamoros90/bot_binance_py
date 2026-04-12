@@ -45,15 +45,15 @@ MAX_POSICIONES = 10       # Hasta 10 posiciones simultáneas para aprovechar tod
 # TRAILING STOP LOSS CONFIGURACIÓN
 # ═══════════════════════════════════════════════════════════════════════════════
 TRAILING_SL_PERCENT = 0.010  # Sniper Mode: 1% trailing stop agresivo para proteger ganancias grandes
-MONITOREO_INTERVALO = int(os.getenv("MONITOREO_INTERVALO", "30"))  # 30s default
-LOG_FRECUENCIA_MONITOREO = 5 # Mostrar log de monitoreo cada 5 ciclos (5 min)
+MONITOREO_INTERVALO = int(os.getenv("MONITOREO_INTERVALO", "2"))  # 2s default para Alta Frecuencia real
+LOG_FRECUENCIA_MONITOREO = 15 # Mostrar log de monitoreo menos seguido
 
-# Scheduler de tareas para controlar carga de CPU/API
-INTERVALO_GUARDIAN             = 30
-INTERVALO_VERIFICAR_SL         = 120
-INTERVALO_TRAILING             = 30
-INTERVALO_TRADES_CERRADOS      = 120
-INTERVALO_RESUMEN_POSICIONES   = 300
+# Scheduler de tareas para controlar carga de CPU/API (Reducido de 30 a 2 seg)
+INTERVALO_GUARDIAN             = 2
+INTERVALO_VERIFICAR_SL         = 10
+INTERVALO_TRAILING             = 2
+INTERVALO_TRADES_CERRADOS      = 10
+INTERVALO_RESUMEN_POSICIONES   = 60
 INTERVALO_METRICAS_IA         = 1800   # V6.2: snapshot intraday cada 30 min
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1271,8 +1271,8 @@ def actualizar_trailing_sl(client):
             ganancia_actual = ((precio_actual - entry_price) / entry_price) if side == 'LONG' else ((entry_price - precio_actual) / entry_price)
             
             # Umbrales
-            UMBRAL_BREAKEVEN = 0.006  # 0.6%
-            UMBRAL_TRAILING = 0.010   # 1.0%
+            UMBRAL_BREAKEVEN = 0.005  # 0.5%
+            UMBRAL_TRAILING = 0.008   # 0.8%
             
             if side == 'LONG':
                 if precio_actual > tracking['best_price']:
@@ -1285,8 +1285,8 @@ def actualizar_trailing_sl(client):
                 if ganancia_best >= UMBRAL_TRAILING:
                     nuevo_sl = tracking['best_price'] * (1 - TRAILING_SL_PERCENT)
                 elif ganancia_best >= UMBRAL_BREAKEVEN:
-                    # Break-even estricto (+0.1% para cubrir fees)
-                    nuevo_sl = entry_price * 1.001
+                    # Break-even estricto (+0.2% para cubrir fees de 10x y asegurar ganancia de $1 o más)
+                    nuevo_sl = entry_price * 1.002
                     
                 if nuevo_sl is not None:
                     if tracking['last_sl'] is None or nuevo_sl > tracking['last_sl']:
@@ -1295,8 +1295,8 @@ def actualizar_trailing_sl(client):
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((nuevo_sl - entry_price) / entry_price) * 100
-                            tipo_ajuste = "Trailing SL" if ganancia_best >= UMBRAL_TRAILING else "Break-Even"
-                            log(f"📈 {tipo_ajuste} V6.3 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
+                            tipo_ajuste = "Trailing SL" if ganancia_best >= UMBRAL_TRAILING else "Break-Even Asegurado"
+                            log(f"📈 {tipo_ajuste} ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
             
             else:  # SHORT
                 if precio_actual < tracking['best_price']:
@@ -1308,8 +1308,8 @@ def actualizar_trailing_sl(client):
                 if ganancia_best >= UMBRAL_TRAILING:
                     nuevo_sl = tracking['best_price'] * (1 + TRAILING_SL_PERCENT)
                 elif ganancia_best >= UMBRAL_BREAKEVEN:
-                    # Break-even estricto (-0.1% para cubrir fees)
-                    nuevo_sl = entry_price * 0.999
+                    # Break-even estricto (-0.2% para cubrir fees de 10x y asegurar ganancia)
+                    nuevo_sl = entry_price * 0.998
                     
                 if nuevo_sl is not None:
                     if tracking['last_sl'] is None or nuevo_sl < tracking['last_sl']:
@@ -1318,8 +1318,8 @@ def actualizar_trailing_sl(client):
                         if success:
                             tracking['last_sl'] = nuevo_sl
                             ganancia_pct = ((entry_price - nuevo_sl) / entry_price) * 100
-                            tipo_ajuste = "Trailing SL" if ganancia_best >= UMBRAL_TRAILING else "Break-Even"
-                            log(f"📉 {tipo_ajuste} V6.3 ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
+                            tipo_ajuste = "Trailing SL" if ganancia_best >= UMBRAL_TRAILING else "Break-Even Asegurado"
+                            log(f"📉 {tipo_ajuste} ({symbol}): ${nuevo_sl:.4f} ({ganancia_pct:+.2f}% vs entry)")
                         
     except Exception as e:
         log(f"⚠️ Error en trailing SL: {e}")
