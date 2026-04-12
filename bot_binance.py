@@ -150,9 +150,9 @@ TP_DINAMICO_PERCENT = 0.02      # TP reducido a 2% después de X días
 # ═══════════════════════════════════════════════════════════════════════════════
 GUARDIAN_ACTIVO = True          # Activar sistema guardián
 MAX_PERDIDA_PERMITIDA = -0.07   # V3.8: -7% cierre obligatorio (antes -10%)
-CIERRE_POR_REVERSION_ACTIVO = True    # V6.7: Cerrar si retrocede después de ganar
-GANANCIA_MINIMA_PARA_PROTEGER = 0.015  # V6.7: Proteger si alcanzó +1.5% de ganancia
-REVERSION_MAXIMA_PERMITIDA = -0.03     # V6.7: Cerrar si cae más de -3% desde el máximo
+CIERRE_POR_REVERSION_ACTIVO = True    # Cerrar si retrocede desde ganancia
+GANANCIA_MINIMA_PARA_PROTEGER = 0.05  # Solo proteger si alcanzó +5% de ganancia (con 10x = 0.5% precio)
+REVERSION_MAXIMA_PERMITIDA = -0.06    # Cerrar solo si cae -6% desde el máximo alcanzado
 LOG_DETALLADO = os.getenv("LOG_DETALLADO", "true").lower() in ("true", "1", "yes")
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2351,12 +2351,13 @@ def ejecutar_trading(client, gemini_client):
             log_throttled("cooldown_capital", "⏳ COOLDOWN ACTIVO: Trading bloqueado para proteger capital tras reducción por Drawdown.", 300)
             return
         
-        # V6.0: Reserva Institucional del 20%
-        # Prohibición de apalancar si más del 80% de la equidad total está cautiva
-        reserva_obligatoria = saldo_total * ESCUDO_SEGURO
-        if saldo_disponible <= reserva_obligatoria:
-            log(f"🛡️ RESERVA DE CAPITAL INTACTA: Operaciones bloqueadas. Disp: ${saldo_disponible:.2f} <= Límite Intocable: ${reserva_obligatoria:.2f}")
-            return
+        # V6.7: ESCUDO DESACTIVADO - no bloquear por margen libre
+        # Con 10 posiciones simultáneas, el margen libre siempre será bajo
+        # La protección real la hace el Guardián con -7% por posición
+        # reserva_obligatoria = saldo_total * ESCUDO_SEGURO
+        # if saldo_disponible <= reserva_obligatoria:
+        #     log(f"🛡️ RESERVA BLOQUEADA: ${saldo_disponible:.2f} <= ${reserva_obligatoria:.2f}")
+        #     return
             
         # ═══════════════════════════════════════════════════════════════════
         # HIBERNACIÓN SEMANAL (Sniper Mode) - V6.4: Aumentado a 30 trades
@@ -2500,22 +2501,18 @@ def ejecutar_trading(client, gemini_client):
                     continue
 
                 # ═══════════════════════════════════════════════════════════════════
-                # PRE-FILTRO TÉCNICO (RSI) - V6.5: CONSISTENTE CON generar_senal_fallback
+                # PRE-FILTRO RSI DESACTIVADO (V6.7)
+                # El filtro ya fue aplicado en generar_senal_fallback()
+                # Aplicarlo dos veces causa el "RECHAZADO POR RSI" en señales válidas
                 # ═══════════════════════════════════════════════════════════════════
-                rsi_valido = False
-                
-                # V6.5 BUGFIX: Alinear con generar_senal_fallback que usa <= 25, >= 75
-                if accion == "LONG":
-                    # Genera LONG cuando RSI <= 25 (85%) o ALCISTA + RSI <= 45 (78%)
-                    rsi_valido = (rsi <= 45)
-                elif accion == "SHORT":
-                    # Genera SHORT cuando RSI >= 75 (85%) o BAJISTA + RSI >= 55 (78%)
-                    rsi_valido = (rsi >= 55)
-
-                if not rsi_valido:
-                    if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f}) - No cumple umbral de acción")
-                    continue
+                # rsi_valido = False
+                # if accion == "LONG":
+                #     rsi_valido = (rsi <= 45)
+                # elif accion == "SHORT":
+                #     rsi_valido = (rsi >= 55)
+                # if not rsi_valido:
+                #     log(f"   ⏭️ {symbol}: RECHAZADO POR RSI ({rsi:.1f})")
+                #     continue
 
                 # V6.1: Contar señal técnica generada (antes del filtro IA)
                 _ia_senales_total += 1

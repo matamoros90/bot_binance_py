@@ -293,8 +293,8 @@ def calcular_metricas_riesgo(dias=30):
         if cumulative > peak:
             peak = cumulative
         dd = peak - cumulative
-        if dd > max_drawdown:
-            max_drawdown = dd
+        if dd > max_dd:  # BUGFIX: era max_drawdown (indefinida) -> max_dd
+            max_dd = dd
     
     return {
         "total_trades": total_trades,
