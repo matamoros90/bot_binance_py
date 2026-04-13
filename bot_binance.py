@@ -36,7 +36,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # CONFIGURACIÓN GLOBAL V7.0
 # ═══════════════════════════════════════════════
 USAR_TESTNET          = os.getenv("BINANCE_TESTNET", "True").lower() in ("true","1","yes")
-BOT_VERSION           = "V7.0 Estabilizado"
+BOT_VERSION           = "V8.0 Tendencia Global"
 
 # FIX1+FIX2: Riesgo conservador
 APALANCAMIENTO        = 3        # era 10x
@@ -49,7 +49,7 @@ EV_MINIMO             = 0.0     # era -10.0
 
 # Señal
 CONFIANZA_MINIMA      = 0.65    # era 0.45
-TOP_ACTIVOS           = 30
+TOP_ACTIVOS           = 8
 VELAS_CANTIDAD        = 250
 TIEMPO_POR_ACTIVO     = 3
 TEMPORALIDADES        = ['15m']
@@ -403,20 +403,52 @@ def obtener_velas(client, symbol, interval="15m", limit=250):
         log(f"⚠️ Error velas {symbol}: {e}")
         return None
 
-def obtener_simbolos_futuros(client):
+# Pares seguros fijos — alta liquidez, baja manipulación
+PARES_SEGUROS = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
+    "XRPUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT"
+]
+
+def obtener_tendencia_mercado_global(client):
+    """
+    Detecta la tendencia general del mercado usando BTC en 1H y 4H.
+    Retorna: "ALCISTA", "BAJISTA" o "LATERAL"
+    Esta es la corrección más importante — si BTC baja, NO abrir LONGs.
+    """
     try:
-        info     = obtener_exchange_info(client)
-        simbolos = [s["symbol"] for s in info["symbols"]
-                    if s["status"]=="TRADING" and s["quoteAsset"]=="USDT"
-                    and not s["symbol"].endswith("_PERP")]
-        tickers  = client.futures_ticker()
-        vol_dict = {t["symbol"]: float(t["quoteVolume"]) for t in tickers}
-        ordenados = sorted(simbolos, key=lambda x: vol_dict.get(x,0), reverse=True)
-        log(f"📊 {len(ordenados)} pares disponibles → top {TOP_ACTIVOS}")
-        return ordenados[:TOP_ACTIVOS]
+        # BTC en 4H para tendencia mayor
+        velas_4h = obtener_velas(client, "BTCUSDT", "4h", 100)
+        if not velas_4h or len(velas_4h) < 50:
+            return "LATERAL"
+        
+        cierres_4h = [v["close"] for v in velas_4h]
+        ema21_4h = sum(cierres_4h[-21:]) / 21
+        ema50_4h = sum(cierres_4h[-50:]) / 50
+        precio_btc = cierres_4h[-1]
+        
+        # BTC en 1H para confirmación
+        velas_1h = obtener_velas(client, "BTCUSDT", "1h", 50)
+        if not velas_1h:
+            return "LATERAL"
+        cierres_1h = [v["close"] for v in velas_1h]
+        ema21_1h = sum(cierres_1h[-21:]) / 21
+        
+        # Tendencia ALCISTA: precio sobre EMA21 en 1H y 4H, y EMA21 > EMA50
+        if precio_btc > ema21_4h and ema21_4h > ema50_4h and precio_btc > ema21_1h:
+            return "ALCISTA"
+        # Tendencia BAJISTA: precio bajo EMA21 en 1H y 4H, y EMA21 < EMA50
+        elif precio_btc < ema21_4h and ema21_4h < ema50_4h and precio_btc < ema21_1h:
+            return "BAJISTA"
+        else:
+            return "LATERAL"
     except Exception as e:
-        log(f"⚠️ Error símbolos: {e}")
-        return ["BTCUSDT","ETHUSDT","BNBUSDT","XRPUSDT","SOLUSDT"]
+        log(f"⚠️ Error tendencia global: {e}")
+        return "LATERAL"
+
+def obtener_simbolos_futuros(client):
+    """V8.0: Pares fijos seguros — no analizar tokens basura."""
+    log(f"📊 Usando {len(PARES_SEGUROS)} pares seguros de alta liquidez")
+    return PARES_SEGUROS
 
 def contar_posiciones_abiertas(client):
     try:
@@ -529,11 +561,11 @@ def calcular_sl_atr(precio, atr, side):
 # ═══════════════════════════════════════════════
 # SEÑAL TÉCNICA V7.0 — TRIPLE CONFIRMACIÓN
 # ═══════════════════════════════════════════════
-def generar_senal_v7(ind, temp="15m"):
+def generar_senal_v8(ind, temp="15m"):
     """
-    V7.0: FIX3 — Señal requiere EMA + MACD + RSI confluentes.
-    Era: solo RSI >= 65 = SHORT (demasiado simplista → muchas falsas).
-    Ahora: los 3 deben coincidir + filtro de volatilidad mínima.
+    V8.0: Señal con CUÁDRUPLE confirmación — RSI + EMA + MACD + Bollinger.
+    Solo opera cuando TODOS los indicadores apuntan a la misma dirección.
+    Elimina señales falsas en mercados laterales o manipulados.
     """
     if not ind:
         return None, 0.0, None, "Sin datos"
@@ -541,36 +573,69 @@ def generar_senal_v7(ind, temp="15m"):
     rsi      = float(ind.get("rsi", 50))
     tendencia= (ind.get("tendencia_ema","") or "").upper()
     hist     = float((ind.get("macd") or {}).get("histograma", 0))
+    macd_val = float((ind.get("macd") or {}).get("macd", 0))
+    signal_val = float((ind.get("macd") or {}).get("signal", 0))
     atr_pct  = float(ind.get("atr_percent", 0))
     vol_rel  = float(ind.get("volumen_relativo", 1))
+    precio   = float(ind.get("precio_actual", 0))
+    bb       = ind.get("bollinger") or {}
+    bb_pos   = float(bb.get("posicion", 50))  # 0=banda inf, 100=banda sup
+    bb_ancho = float(bb.get("ancho", 0))
 
-    # Filtro volatilidad mínima — no operar en mercados dormidos
+    # ── Filtros base ──────────────────────────────────
     if atr_pct < 0.30:
         return None, 0.0, None, f"ATR insuficiente ({atr_pct:.2f}%)"
+    
+    if bb_ancho < 1.0:
+        return None, 0.0, None, f"Bollinger muy estrecho ({bb_ancho:.2f}%) — consolidación"
 
-    # ── LONG ──────────────────────────────────────────
-    if rsi < 40 and "ALCISTA" in tendencia and hist > 0:
-        conf = 0.92 if rsi < 30 else 0.85
-        return "LONG", conf, temp, f"Triple LONG: RSI={rsi:.0f} {tendencia} MACD↑"
+    # ── LONG: 4 condiciones deben cumplirse ──────────
+    # 1. RSI en zona de sobreventa (< 40)
+    # 2. Tendencia EMA alcista
+    # 3. MACD histograma positivo (cruzando al alza)
+    # 4. Precio cerca de banda inferior de Bollinger (< 35%)
+    long_rsi  = rsi < 40
+    long_ema  = "ALCISTA" in tendencia
+    long_macd = hist > 0 and macd_val > signal_val
+    long_bb   = bb_pos < 35  # precio en tercio inferior de Bollinger
 
-    if rsi < 45 and "ALCISTA_FUERTE" in tendencia and hist > 0 and vol_rel > 1.2:
-        return "LONG", 0.80, temp, f"LONG fuerte+vol: RSI={rsi:.0f} {tendencia}"
+    puntos_long = sum([long_rsi, long_ema, long_macd, long_bb])
+    
+    if puntos_long >= 3:  # mínimo 3 de 4 condiciones
+        conf = 0.90 if puntos_long == 4 else 0.78
+        razones = []
+        if long_rsi:  razones.append(f"RSI={rsi:.0f}")
+        if long_ema:  razones.append(tendencia)
+        if long_macd: razones.append("MACD↑")
+        if long_bb:   razones.append(f"BB={bb_pos:.0f}%")
+        return "LONG", conf, temp, f"LONG {puntos_long}/4: {' '.join(razones)}"
 
-    # ── SHORT ──────────────────────────────────────────
-    if rsi > 60 and "BAJISTA" in tendencia and hist < 0:
-        conf = 0.92 if rsi > 70 else 0.85
-        return "SHORT", conf, temp, f"Triple SHORT: RSI={rsi:.0f} {tendencia} MACD↓"
+    # ── SHORT: 4 condiciones deben cumplirse ─────────
+    # 1. RSI en zona de sobrecompra (> 60)
+    # 2. Tendencia EMA bajista
+    # 3. MACD histograma negativo (cruzando a la baja)
+    # 4. Precio cerca de banda superior de Bollinger (> 65%)
+    short_rsi  = rsi > 60
+    short_ema  = "BAJISTA" in tendencia
+    short_macd = hist < 0 and macd_val < signal_val
+    short_bb   = bb_pos > 65  # precio en tercio superior de Bollinger
 
-    if rsi > 55 and "BAJISTA_FUERTE" in tendencia and hist < 0 and vol_rel > 1.2:
-        return "SHORT", 0.80, temp, f"SHORT fuerte+vol: RSI={rsi:.0f} {tendencia}"
+    puntos_short = sum([short_rsi, short_ema, short_macd, short_bb])
+    
+    if puntos_short >= 3:
+        conf = 0.90 if puntos_short == 4 else 0.78
+        razones = []
+        if short_rsi:  razones.append(f"RSI={rsi:.0f}")
+        if short_ema:  razones.append(tendencia)
+        if short_macd: razones.append("MACD↓")
+        if short_bb:   razones.append(f"BB={bb_pos:.0f}%")
+        return "SHORT", conf, temp, f"SHORT {puntos_short}/4: {' '.join(razones)}"
 
-    # ── Extremos RSI como respaldo ───────────────────
-    if rsi <= 25 and hist > 0:
-        return "LONG",  0.75, temp, f"Sobreventa extrema RSI={rsi:.0f}"
-    if rsi >= 75 and hist < 0:
-        return "SHORT", 0.75, temp, f"Sobrecompra extrema RSI={rsi:.0f}"
+    return None, 0.0, None, f"Sin confluencia (L:{puntos_long}/4 S:{puntos_short}/4)"
 
-    return None, 0.0, None, "Sin confluencia triple"
+# Alias para compatibilidad
+def generar_senal_v7(ind, temp="15m"):
+    return generar_senal_v8(ind, temp)
 
 # ═══════════════════════════════════════════════
 # HORARIO Y NOTICIAS
@@ -1045,7 +1110,16 @@ def ejecutar_trading(client):
 
         simbolos_pos = obtener_simbolos_con_posicion(client)
         simbolos     = obtener_simbolos_futuros(client)
-        log(f"🔍 Analizando {len(simbolos)} pares...")
+        
+        # ── V8.0: Detector de tendencia global BTC ───────────
+        tendencia_global = obtener_tendencia_mercado_global(client)
+        log(f"🌍 Tendencia global BTC: {tendencia_global}")
+        
+        if tendencia_global == "LATERAL":
+            log("⏸️ Mercado LATERAL global — sin operaciones. Esperando dirección.")
+            return
+        
+        log(f"🔍 Analizando {len(simbolos)} pares en mercado {tendencia_global}...")
 
         oportunidades = []
 
@@ -1084,11 +1158,22 @@ def ejecutar_trading(client):
                 if "LATERAL" in tend and 47 <= rsi <= 53:   # Mercado plano
                     continue
 
-                # ── Señal V7.0 triple confirmación ───────────────
+                # ── Señal V8.0 triple confirmación ───────────────
                 accion, conf, temp, razon = generar_senal_v7(ind, "15m")
                 if not accion:
                     if LOG_DETALLADO:
                         log(f"   ⏭️ {symbol}: {razon}")
+                    continue
+
+                # ── V8.0: Filtro alineación con tendencia global ──
+                # Si BTC bajista → solo SHORT. Si alcista → solo LONG.
+                if tendencia_global == "BAJISTA" and accion == "LONG":
+                    if LOG_DETALLADO:
+                        log(f"   🚫 {symbol}: LONG bloqueado — mercado global BAJISTA")
+                    continue
+                if tendencia_global == "ALCISTA" and accion == "SHORT":
+                    if LOG_DETALLADO:
+                        log(f"   🚫 {symbol}: SHORT bloqueado — mercado global ALCISTA")
                     continue
 
                 # ── Filtro macro 1H (EMA200) ─────────────────────
