@@ -1,7 +1,0 @@
-__pycache__/
-*.pyc
-trades.db
-.pytest_cache/
-.vscode/
-ANALISIS_ESTRUCTURA.md
-.env
