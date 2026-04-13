@@ -1,0 +1,8 @@
+python-binance>=1.0.34
+python-dotenv>=1.0.0
+requests>=2.31.0
+pandas>=2.0.0
+google-genai
+yfinance
+streamlit>=1.30.0
+streamlit-autorefresh
