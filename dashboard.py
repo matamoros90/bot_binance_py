@@ -18,7 +18,7 @@ USAR_TESTNET = os.getenv("BINANCE_TESTNET", "True").lower() in ("true", "1", "ye
 # CONFIGURACIÓN DE PÁGINA
 # ═══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Hedge Fund Dashboard",
+    page_title="Bot Binance V8.0 Dashboard",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -40,7 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🛡️ Institutional Trading Dashboard")
-st.markdown("Monitor de Operaciones Algorítmicas V6.2 — **Modo Solo Lectura • Tiempo Real**")
+st.markdown("Monitor de Operaciones Algorítmicas V8.0 — **Modo Solo Lectura • Tiempo Real**")
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -264,6 +264,25 @@ if capital is not None:
 with col1:
     st.subheader("Estado de Sistema")
     st.info(estado_bot)
+    # Leer tendencia global del log más reciente
+    try:
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "bot.log")
+        if os.path.exists(log_path):
+            with open(log_path, "r") as lf:
+                lineas = lf.readlines()
+            # Buscar última línea con tendencia global
+            tendencia_linea = next(
+                (l for l in reversed(lineas) if "Tendencia global BTC" in l), None
+            )
+            if tendencia_linea:
+                if "ALCISTA" in tendencia_linea:
+                    st.success("🌍 BTC: ALCISTA — Solo LONG")
+                elif "BAJISTA" in tendencia_linea:
+                    st.error("🌍 BTC: BAJISTA — Solo SHORT")
+                else:
+                    st.warning("🌍 BTC: LATERAL — Sin operaciones")
+    except Exception:
+        pass
 
 # ─── 2. ALERTAS VISUALES DE RIESGO ───
 with col2:
