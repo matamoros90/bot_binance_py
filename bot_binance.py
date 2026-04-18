@@ -1,1464 +1,670 @@
 """
-BOT BINANCE IA V7.0 — ESTABILIZADO
-CORRECCIONES vs V6.7:
-  FIX1: Apalancamiento 10x → 3x (evita liquidaciones)
-  FIX2: Riesgo 5% × 10 pos → 1.5% × 5 pos (exposición controlada)
-  FIX3: Señal triple confirmación EMA+MACD+RSI (menos falsas)
-  FIX4: Gemini opcional, no bloquea arranque
-  FIX5: ATR SL activado (SL dinámico adaptativo)
-  FIX6: EV_MINIMO = 0.0 (solo trades con expectativa positiva)
-  FIX7: Watchdog externo para 24/7
-  FIX8: Variable de entorno unificada
+BOT BINANCE V9.0 — SIMPLE Y OPERATIVO
+======================================
+FILOSOFÍA: Menos filtros = más trades = más oportunidades de ganar.
+
+REGLAS SIMPLES:
+  1. Solo 8 pares con liquidez real
+  2. Señal: RSI extremo + dirección EMA (2 condiciones, no 10)
+  3. SL dinámico ATR, TP = 2x SL siempre
+  4. Máximo 3 posiciones, 2% capital por trade
+  5. Sin bloqueo por mercado lateral — siempre busca oportunidades
+  6. Guardian cierra si pierde más de 5%
 """
 
 from binance.client import Client
 from binance.enums import *
-import time, os, http.server, socketserver, threading, requests, json, sys
+import time, os, sys, json, threading
+import http.server, socketserver, requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from zoneinfo import ZoneInfo
 from persistence import (
     inicializar_db, registrar_trade_abierto, registrar_trade_cerrado,
     registrar_decision, registrar_balance_diario, calcular_metricas_riesgo,
     generar_resumen_metricas, contar_trades_semana_actual
 )
 from capital_manager import CapitalManager
-from indicators import (
-    calcular_rsi, calcular_ema, calcular_macd, calcular_bollinger,
-    calcular_atr, calcular_volumen_relativo, detectar_soportes_resistencias,
-    obtener_tendencia_ema, analizar_indicadores_completo
-)
+from indicators import analizar_indicadores_completo
 
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
 
-# ═══════════════════════════════════════════════
-# CONFIGURACIÓN GLOBAL V7.0
-# ═══════════════════════════════════════════════
-USAR_TESTNET          = os.getenv("BINANCE_TESTNET", "True").lower() in ("true","1","yes")
-BOT_VERSION           = "V8.0 Tendencia Global"
+# ══════════════════════════════════════════
+# CONFIGURACIÓN — SIMPLE Y CLARA
+# ══════════════════════════════════════════
+BOT_VERSION   = "V9.0 Simple"
+USAR_TESTNET  = os.getenv("BINANCE_TESTNET", "true").lower() in ("true","1","yes")
 
-# FIX1+FIX2: Riesgo conservador
-APALANCAMIENTO        = 3        # era 10x
-MAX_POSICIONES        = 5        # era 10
-RIESGO_POR_TRADE_PCT  = 0.015   # era 0.05 (5%)
-GUARDIAN_ACTIVO       = True
+# Pares seguros con liquidez real
+PARES = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT",
+         "XRPUSDT","ADAUSDT","AVAXUSDT","LINKUSDT"]
 
-# FIX6: EV positivo obligatorio
-EV_MINIMO             = 0.0     # era -10.0
+# Riesgo
+APALANCAMIENTO       = 3      # 3x — conservador
+MAX_POSICIONES       = 3      # máximo 3 abiertas
+RIESGO_PCT           = 0.02   # 2% del capital por trade
+MAX_PERDIDA_DIARIA   = 0.05   # parar si pierde 5% en el día
+MAX_PERDIDA_POSICION = 0.06   # cerrar si posición pierde 6%
 
-# Señal
-CONFIANZA_MINIMA      = 0.65    # era 0.45
-TOP_ACTIVOS           = 8
-VELAS_CANTIDAD        = 250
-TIEMPO_POR_ACTIVO     = 3
-TEMPORALIDADES        = ['15m']
+# Señal — SIMPLE
+RSI_SOBREVENTA  = 38   # comprar cuando RSI < 38
+RSI_SOBRECOMPRA = 62   # vender cuando RSI > 62
 
-# Trailing
-TRAILING_SL_PERCENT   = 0.012
-UMBRAL_BREAKEVEN      = 0.008
-UMBRAL_TRAILING       = 0.015
+# SL/TP
+ATR_MULT_SL = 1.5     # SL = 1.5 × ATR
+TP_RATIO    = 2.0     # TP = 2 × SL siempre
 
-# TP/SL — ratio mínimo 2:1
-TP_SL_CONFIG = {
-    "1h":  {"tp": 0.040, "sl": 0.018},
-    "15m": {"tp": 0.025, "sl": 0.012},
-    "5m":  {"tp": 0.015, "sl": 0.007},
-}
-TP_SL_RANGO_CONFIG = {
-    "1h":  {"tp": 0.020, "sl": 0.009},
-    "15m": {"tp": 0.012, "sl": 0.005},
-    "5m":  {"tp": 0.008, "sl": 0.004},
-}
-
-# FIX5: ATR SL activado
-ATR_SL_ACTIVO         = True    # era False
-ATR_SL_MULTIPLICADOR  = 1.5
-ATR_SL_MINIMO_PERCENT = 0.008
-
-# Drawdown
-DRAWDOWN_MAXIMO_DIARIO = 0.05
-DRAWDOWN_ACTIVO        = True
-
-# Funding
-FUNDING_PROTECTION  = True
-MAX_DIAS_POSICION   = 3
-TP_DINAMICO_DIAS    = 1
-TP_DINAMICO_PERCENT = 0.02
-
-# Guardian
-MAX_PERDIDA_PERMITIDA          = -0.06
-CIERRE_POR_REVERSION_ACTIVO    = True
-GANANCIA_MINIMA_PARA_PROTEGER  = 0.04
-REVERSION_MAXIMA_PERMITIDA     = -0.05
-
-# Escudo capital
-ESCUDO_SEGURO  = 0.15   # 15% intocable, era 5%
-ESCUDO_TRABAJO = 0.85
-FACTOR_MONTO_RANGO = 0.8
-
-# Scheduler
-MONITOREO_INTERVALO          = 5
-INTERVALO_GUARDIAN           = 10
-INTERVALO_VERIFICAR_SL       = 15
-INTERVALO_TRAILING           = 5
-INTERVALO_TRADES_CERRADOS    = 15
-INTERVALO_RESUMEN_POSICIONES = 60
-
-# FIX4: Gemini opcional
-USAR_IA    = False
-IA_MAX_FALLOS = 3
+# Tiempos
+CICLO_SEG        = 30   # analizar cada 30 segundos
+TIEMPO_PAR_SEG   = 2    # espera entre pares
 
 # Fees
-FEE_ROUNDTRIP_EST = 0.0012
-SLIPPAGE_EST      = 0.0006
-LOG_DETALLADO     = os.getenv("LOG_DETALLADO","true").lower() in ("true","1","yes")
-BALANCE_INICIAL_PROYECTO = 1000.0
+FEE_TOTAL = 0.0018
 
-# Noticias
-NOTICIAS_PROTECCION_ACTIVA      = True
-CRYPTO_PANIC_URL                = "https://cryptopanic.com/api/v1/posts/"
-CRYPTO_PANIC_KEY                = os.getenv("CRYPTOPANIC_API_KEY")
-PAUSA_NOTICIAS_MINUTOS          = 60
-NOTICIAS_CHECK_INTERVALO        = 300
-NOTICIAS_KEYWORDS_ALTO_IMPACTO = (
-    "sec","hack","exploit","ban","lawsuit","fed","fomc","cpi",
-    "liquidation","bankruptcy","crash","etf denied","exchange halted",
-    "outage","default","war","sanction"
-)
+# ══════════════════════════════════════════
+# ESTADO GLOBAL
+# ══════════════════════════════════════════
+stats = {
+    "balance_inicio_dia": 0,
+    "pnl_dia": 0,
+    "pausado": False,
+    "fecha": None,
+    "ganados": 0,
+    "perdidos": 0,
+}
+_servidor_inicio = time.time()
+_cache_pos    = {"ts": 0, "data": None}
+_cache_info   = {"ts": 0, "data": None}
+_notificadas  = set()
+_sl_log       = {}
+client        = None
+cm            = None
 
-# Horario
-HORARIO_PROTEGIDO_ACTIVO = True
-try:    TZ_MERCADO = ZoneInfo("America/New_York")
-except: TZ_MERCADO = None
-try:    TZ_LOCAL = ZoneInfo("America/Guatemala")
-except: TZ_LOCAL = None
-
-VENTANA_USA_INICIO_MIN = 8*60+30
-VENTANA_USA_FIN_MIN    = 9*60+30
-VENTANA_FED_DIA        = 2
-VENTANA_FED_INICIO_MIN = 13*60+45
-VENTANA_FED_FIN_MIN    = 14*60+30
-
-# Estado global
-stats_semanales = {"balance_inicio_semana":0,"ganados":0,"perdidos":0,
-                   "monto_ganado":0,"monto_perdido":0,"cierres_guardian":0,"ultimo_resumen":None}
-stats_diarias   = {"balance_inicio_dia":0,"trades_ganados":0,"trades_perdidos":0,
-                   "monto_ganado":0,"monto_perdido":0,"drawdown_pausado":False,
-                   "fecha_actual":None,"pnl_dia":0}
-task_last_run        = {}
-log_throttle         = {}
-_positions_cache     = {"ts":0.0,"data":None}
-_exchange_info_cache = {"ts":0.0,"data":None}
-_sl_retry_cooldown_until = {}
-_tp_dinamico_cooldown    = {}
-SL_REINTENTO_COOLDOWN    = 300
-TP_DINAMICO_COOLDOWN     = 3600
-_ia_senales_total    = 0
-_ia_senales_validadas= 0
-_resumen_diario_enviado = False
-_ultimo_resumen_diario  = {}
-_ultimo_resumen_semanal = {}
-_servidor_inicio     = time.time()
-posiciones_tracking  = {}
-posiciones_notificadas = set()
-pausa_noticias_hasta = None
-ultimo_check_noticias= 0.0
-_sl_verificados      = {}
-cm = None
-client = None
-
-# Expo push (opcional)
-try:
-    from expo_push import guardar_push_token, enviar_push_notification
-    EXPO_DISPONIBLE = True
-except Exception:
-    EXPO_DISPONIBLE = False
-    def guardar_push_token(t): pass
-    def enviar_push_notification(t,b,d=None): pass
-
-
-# ═══════════════════════════════════════════════
-# UTILIDADES GENERALES
-# ═══════════════════════════════════════════════
-def hora_local():
-    if TZ_LOCAL:
-        return datetime.now(TZ_LOCAL)
-    return datetime.now()
-
+# ══════════════════════════════════════════
+# UTILIDADES
+# ══════════════════════════════════════════
 def log(msg):
-    print(f"[BINANCE] {msg}", flush=True)
+    print(f"[BOT] {msg}", flush=True)
 
-def should_run_task(name, interval):
-    now = time.time()
-    if now - task_last_run.get(name, 0.0) >= interval:
-        task_last_run[name] = now
-        return True
-    return False
-
-def log_throttled(key, msg, cooldown=180):
-    now = time.time()
-    if now - log_throttle.get(key, 0.0) >= cooldown:
-        log_throttle[key] = now
-        log(msg)
-
-# ═══════════════════════════════════════════════
-# TELEGRAM
-# ═══════════════════════════════════════════════
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-def enviar_telegram(msg):
+def tg(msg):
+    """Envía mensaje a Telegram."""
     try:
-        if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-            return
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-            timeout=10
-        )
+        token   = os.getenv("TELEGRAM_TOKEN","")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID","")
+        if token and chat_id:
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+                timeout=8
+            )
     except Exception:
         pass
 
-# ═══════════════════════════════════════════════
-# SERVIDOR HTTP (health check + API)
-# ═══════════════════════════════════════════════
-def servidor_salud():
-    PORT = int(os.getenv("PORT", 8000))
-
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def _json(self, data, status=200):
-            body = json.dumps(data, ensure_ascii=False, default=str).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_OPTIONS(self):
-            self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin","*")
-            self.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers","Content-Type, Accept")
-            self.end_headers()
-
-        def do_POST(self):
-            if self.path == "/api/register-push-token":
-                try:
-                    length = int(self.headers.get("Content-Length",0))
-                    body   = json.loads(self.rfile.read(length))
-                    token  = body.get("token","")
-                    if token:
-                        guardar_push_token(token)
-                        self._json({"ok": True})
-                    else:
-                        self._json({"ok": False}, 400)
-                except Exception as e:
-                    self._json({"ok": False, "message": str(e)}, 500)
-
-            elif self.path == "/api/panic":
-                try:
-                    positions = obtener_posiciones(client)
-                    cerradas  = 0
-                    for pos in positions:
-                        qty = float(pos.get("positionAmt", 0))
-                        if qty != 0:
-                            sym  = pos["symbol"]
-                            side = "SELL" if qty > 0 else "BUY"
-                            client.futures_cancel_all_open_orders(symbol=sym)
-                            client.futures_create_order(symbol=sym, side=side,
-                                type="MARKET", quantity=abs(qty), reduceOnly="true")
-                            cerradas += 1
-                    stats_diarias["drawdown_pausado"] = True
-                    log(f"🚨 PÁNICO: {cerradas} posiciones cerradas.")
-                    self._json({"ok": True, "cerradas": cerradas})
-                except Exception as e:
-                    self._json({"ok": False, "message": str(e)}, 500)
-            else:
-                self._json({"error": "not found"}, 404)
-
-        def do_GET(self):
-            path = self.path.split("?")[0]
-            if path == "/api/status":
-                try:
-                    posiciones_activas = []
-                    if client:
-                        for p in obtener_posiciones(client):
-                            if float(p.get("positionAmt",0)) != 0:
-                                posiciones_activas.append({
-                                    "symbol": p["symbol"],
-                                    "side": "LONG" if float(p["positionAmt"]) > 0 else "SHORT",
-                                    "pnl": round(float(p.get("unRealizedProfit",0)),2)
-                                })
-                    bal   = obtener_balance(client) if client else 0
-                    puede = verificar_drawdown_diario(bal) if client else False
-                    self._json({
-                        "version": BOT_VERSION, "balance": round(bal,2),
-                        "posiciones_abiertas": len(posiciones_activas),
-                        "max_posiciones": MAX_POSICIONES,
-                        "apalancamiento": APALANCAMIENTO,
-                        "riesgo_trade_pct": RIESGO_POR_TRADE_PCT*100,
-                        "puede_operar": puede,
-                        "uptime_seconds": int(time.time()-_servidor_inicio),
-                        "posiciones_detalle": posiciones_activas,
-                        "timestamp": hora_local().isoformat()
-                    })
-                except Exception as e:
-                    self._json({"error": str(e)}, 500)
-
-            elif path == "/api/resumen-diario":
-                self._json(_ultimo_resumen_diario or {"fecha": hora_local().strftime("%d/%m/%Y")})
-
-            elif path == "/api/resumen-semanal":
-                self._json(_ultimo_resumen_semanal or {})
-
-            elif path == "/api/trades":
-                try:
-                    from persistence import _get_conn
-                    conn = _get_conn()
-                    c    = conn.cursor()
-                    c.execute("""SELECT id,symbol,side,action,pnl,confidence,
-                                        temporalidad,razon,closed_at
-                                 FROM trades WHERE status='CLOSED' AND pnl!=0
-                                 ORDER BY closed_at DESC LIMIT 20""")
-                    rows = c.fetchall()
-                    conn.close()
-                    self._json([dict(r) for r in rows])
-                except Exception as e:
-                    self._json({"error": str(e)}, 500)
-
-            elif path == "/api/metricas":
-                try:
-                    self._json(calcular_metricas_riesgo(dias=30))
-                except Exception as e:
-                    self._json({"error": str(e)}, 500)
-            else:
-                self.send_response(200)
-                self.send_header("Access-Control-Allow-Origin","*")
-                self.end_headers()
-                self.wfile.write(f"BOT {BOT_VERSION} OK".encode())
-
-        def log_message(self, *args):
-            pass
-
+def hora():
+    from zoneinfo import ZoneInfo
     try:
-        with socketserver.TCPServer(("", PORT), Handler) as httpd:
-            httpd.serve_forever()
+        return datetime.now(ZoneInfo("America/Guatemala"))
     except Exception:
-        pass
+        return datetime.now()
 
-threading.Thread(target=servidor_salud, daemon=True).start()
-
-
-# ═══════════════════════════════════════════════
-# BINANCE — CACHÉ Y CONSULTAS
-# ═══════════════════════════════════════════════
-def obtener_posiciones(client, ttl=3, force=False):
+# ══════════════════════════════════════════
+# BINANCE — FUNCIONES BASE
+# ══════════════════════════════════════════
+def posiciones(force=False):
     now = time.time()
-    if not force and _positions_cache["data"] is not None and now - _positions_cache["ts"] < ttl:
-        return _positions_cache["data"]
+    if not force and _cache_pos["data"] and now - _cache_pos["ts"] < 3:
+        return _cache_pos["data"]
     data = client.futures_position_information()
-    _positions_cache.update({"ts": now, "data": data})
+    _cache_pos.update({"ts": now, "data": data})
     return data
 
-def obtener_exchange_info(client, ttl=1800, force=False):
+def exchange_info(force=False):
     now = time.time()
-    if not force and _exchange_info_cache["data"] is not None and now - _exchange_info_cache["ts"] < ttl:
-        return _exchange_info_cache["data"]
+    if not force and _cache_info["data"] and now - _cache_info["ts"] < 1800:
+        return _cache_info["data"]
     data = client.futures_exchange_info()
-    _exchange_info_cache.update({"ts": now, "data": data})
+    _cache_info.update({"ts": now, "data": data})
     return data
 
-def obtener_balance(client):
+def balance():
     try:
         for b in client.futures_account_balance():
             if b["asset"] == "USDT":
                 return float(b["balance"])
         return 0.0
-    except Exception as e:
-        log(f"⚠️ Error balance: {e}")
+    except Exception:
         return 0.0
 
-def obtener_balance_disponible(client):
+def balance_disponible():
     try:
         return float(client.futures_account().get("availableBalance", 0))
-    except Exception as e:
-        log(f"⚠️ Error balance disponible: {e}")
+    except Exception:
         return 0.0
 
-def obtener_balance_total(client):
+def velas(symbol, interval="15m", limit=200):
     try:
-        acc = client.futures_account()
-        return float(acc.get("totalWalletBalance",0)) + float(acc.get("totalUnrealizedProfit",0))
-    except Exception:
-        return obtener_balance(client)
-
-def obtener_velas(client, symbol, interval="15m", limit=250):
-    try:
-        klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
-        return [{"timestamp":k[0],"open":float(k[1]),"high":float(k[2]),
-                 "low":float(k[3]),"close":float(k[4]),"volume":float(k[5])}
-                for k in klines]
+        k = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
+        return [{"timestamp":x[0],"open":float(x[1]),"high":float(x[2]),
+                 "low":float(x[3]),"close":float(x[4]),"volume":float(x[5])}
+                for x in k]
     except Exception as e:
-        log(f"⚠️ Error velas {symbol}: {e}")
+        log(f"⚠️ Velas {symbol}: {e}")
         return None
 
-# Pares seguros fijos — alta liquidez, baja manipulación
-PARES_SEGUROS = [
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
-    "XRPUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT"
-]
-
-def obtener_tendencia_mercado_global(client):
-    """
-    Detecta la tendencia general del mercado usando BTC en 1H y 4H.
-    Retorna: "ALCISTA", "BAJISTA" o "LATERAL"
-    Esta es la corrección más importante — si BTC baja, NO abrir LONGs.
-    """
+def pos_abiertas():
     try:
-        # BTC en 4H para tendencia mayor
-        velas_4h = obtener_velas(client, "BTCUSDT", "4h", 100)
-        if not velas_4h or len(velas_4h) < 50:
-            return "LATERAL"
-        
-        cierres_4h = [v["close"] for v in velas_4h]
-        ema21_4h = sum(cierres_4h[-21:]) / 21
-        ema50_4h = sum(cierres_4h[-50:]) / 50
-        precio_btc = cierres_4h[-1]
-        
-        # BTC en 1H para confirmación
-        velas_1h = obtener_velas(client, "BTCUSDT", "1h", 50)
-        if not velas_1h:
-            return "LATERAL"
-        cierres_1h = [v["close"] for v in velas_1h]
-        ema21_1h = sum(cierres_1h[-21:]) / 21
-        
-        # Tendencia ALCISTA: precio sobre EMA21 en 1H y 4H, y EMA21 > EMA50
-        if precio_btc > ema21_4h and ema21_4h > ema50_4h and precio_btc > ema21_1h:
-            return "ALCISTA"
-        # Tendencia BAJISTA: precio bajo EMA21 en 1H y 4H, y EMA21 < EMA50
-        elif precio_btc < ema21_4h and ema21_4h < ema50_4h and precio_btc < ema21_1h:
-            return "BAJISTA"
-        else:
-            return "LATERAL"
-    except Exception as e:
-        log(f"⚠️ Error tendencia global: {e}")
-        return "LATERAL"
-
-def obtener_simbolos_futuros(client):
-    """V8.0: Pares fijos seguros — no analizar tokens basura."""
-    log(f"📊 Usando {len(PARES_SEGUROS)} pares seguros de alta liquidez")
-    return PARES_SEGUROS
-
-def contar_posiciones_abiertas(client):
-    try:
-        return len([p for p in obtener_posiciones(client) if float(p.get("positionAmt",0)) != 0])
-    except Exception:
-        return 0
-
-def obtener_simbolos_con_posicion(client):
-    try:
-        return [p["symbol"] for p in obtener_posiciones(client) if float(p.get("positionAmt",0)) != 0]
+        return [p for p in posiciones() if float(p.get("positionAmt",0)) != 0]
     except Exception:
         return []
 
-def configurar_apalancamiento(client, symbol, leverage=3):
-    try:
-        client.futures_change_leverage(symbol=symbol, leverage=leverage)
-    except Exception as e:
-        if "No need to change leverage" not in str(e):
-            log(f"⚠️ Leverage {symbol}: {e}")
+def simbolos_con_pos():
+    return [p["symbol"] for p in pos_abiertas()]
 
-def calcular_cantidad(client, symbol, monto_usdt, precio_actual):
+def precision_precio(symbol):
     try:
-        info = obtener_exchange_info(client)
+        info = exchange_info()
+        si = next((s for s in info["symbols"] if s["symbol"]==symbol), None)
+        return int(si["pricePrecision"]) if si else 4
+    except Exception:
+        return 4
+
+def cantidad(symbol, monto_usdt, precio):
+    try:
+        info = exchange_info()
         si   = next((s for s in info["symbols"] if s["symbol"]==symbol), None)
         if not si:
             return None
-        qty_precision = int(si["quantityPrecision"])
-        cantidad = round(monto_usdt / precio_actual, qty_precision)
-        min_qty  = float(next((f["minQty"] for f in si["filters"] if f["filterType"]=="LOT_SIZE"), 0.001))
-        return cantidad if cantidad >= min_qty else None
-    except Exception as e:
-        log(f"⚠️ Error cantidad {symbol}: {e}")
+        qp  = int(si["quantityPrecision"])
+        qty = round(monto_usdt / precio, qp)
+        mq  = float(next((f["minQty"] for f in si["filters"] if f["filterType"]=="LOT_SIZE"), 0.001))
+        return qty if qty >= mq else None
+    except Exception:
         return None
 
-def inicializar_cache_trades(client):
-    global posiciones_notificadas
+def set_leverage(symbol, lev):
     try:
-        trades = client.futures_account_trades(limit=100)
-        for t in trades:
-            pnl = float(t.get("realizedPnl", 0))
-            if pnl != 0:
-                posiciones_notificadas.add(f"{t.get('orderId','')}_{t.get('symbol','')}_{pnl}")
-        log(f"✅ Cache trades: {len(posiciones_notificadas)} entradas")
+        client.futures_change_leverage(symbol=symbol, leverage=lev)
     except Exception as e:
-        log(f"⚠️ Error cache trades: {e}")
+        if "No need" not in str(e):
+            log(f"⚠️ Leverage {symbol}: {e}")
 
-# ═══════════════════════════════════════════════
-# GESTIÓN DE RIESGO
-# ═══════════════════════════════════════════════
-def verificar_nuevo_dia(balance_actual):
-    hoy = hora_local().strftime("%Y-%m-%d")
-    if stats_diarias["fecha_actual"] != hoy:
-        stats_diarias.update({
-            "fecha_actual": hoy, "balance_inicio_dia": balance_actual,
-            "trades_ganados": 0, "trades_perdidos": 0,
-            "monto_ganado": 0, "monto_perdido": 0,
-            "drawdown_pausado": False, "pnl_dia": 0
-        })
-        log(f"📅 Nuevo día {hoy}. Balance inicio: ${balance_actual:.2f}")
-        return True
-    return False
+# ══════════════════════════════════════════
+# GESTIÓN DE RIESGO DIARIO
+# ══════════════════════════════════════════
+def check_nuevo_dia(bal):
+    hoy = hora().strftime("%Y-%m-%d")
+    if stats["fecha"] != hoy:
+        stats.update({"fecha": hoy, "balance_inicio_dia": bal,
+                      "pnl_dia": 0, "pausado": False})
+        log(f"📅 Nuevo día {hoy}. Balance inicio: ${bal:.2f}")
 
-def verificar_drawdown_diario(balance_actual):
-    if not DRAWDOWN_ACTIVO:
-        return True
-    if stats_diarias["drawdown_pausado"]:
-        log_throttled("dd_msg","⏸️ Bot pausado por drawdown. Esperando nuevo día...",300)
+def puede_operar(bal):
+    check_nuevo_dia(bal)
+    if stats["pausado"]:
         return False
-    inicio = stats_diarias["balance_inicio_dia"]
+    inicio = stats["balance_inicio_dia"]
     if inicio <= 0:
         return True
-    dd = (balance_actual - inicio) / inicio
-    stats_diarias["pnl_dia"] = balance_actual - inicio
-    if dd < -DRAWDOWN_MAXIMO_DIARIO:
-        stats_diarias["drawdown_pausado"] = True
-        perdida = inicio - balance_actual
-        log(f"🛑 DRAWDOWN MÁXIMO: ${perdida:.2f} ({dd*100:.2f}%) — Bot pausado hasta mañana")
-        enviar_telegram(f"🛑 *Drawdown diario alcanzado*\nPérdida: ${perdida:.2f} ({dd*100:.2f}%)\nBot pausado hasta mañana.")
+    dd = (bal - inicio) / inicio
+    stats["pnl_dia"] = bal - inicio
+    if dd < -MAX_PERDIDA_DIARIA:
+        stats["pausado"] = True
+        log(f"🛑 Pérdida diaria {dd*100:.1f}% — bot pausado hasta mañana")
+        tg(f"🛑 Pérdida diaria alcanzada: {dd*100:.1f}%\nBot pausado hasta mañana.")
         return False
     return True
 
-def calcular_monto(saldo):
-    """V7.0: 1.5% del capital por trade (era 5%). Exposición máx = 7.5% con 5 posiciones."""
-    capital = cm.get_capital_operativo() if cm is not None else saldo
-    monto   = capital * RIESGO_POR_TRADE_PCT
-    if LOG_DETALLADO:
-        log(f"   💰 Riesgo {RIESGO_POR_TRADE_PCT*100:.1f}%: Base ${capital:.2f} → Monto ${monto:.2f}")
-    return max(1.0, round(monto, 2))
-
-def actualizar_stats_trade(pnl):
-    if pnl >= 0:
-        stats_diarias["trades_ganados"] += 1
-        stats_diarias["monto_ganado"]   += pnl
-    else:
-        stats_diarias["trades_perdidos"] += 1
-        stats_diarias["monto_perdido"]   += abs(pnl)
-
-def calcular_ev_neto(confianza, tp_pct, sl_pct, modo="TREND"):
-    p = max(0.40, min(0.90, confianza - (0.05 if modo=="RANGE" else 0)))
-    return (p*tp_pct - (1-p)*sl_pct) - FEE_ROUNDTRIP_EST - SLIPPAGE_EST, p
-
-def calcular_sl_atr(precio, atr, side):
-    """V7.0: ATR activado — SL dinámico que se adapta a la volatilidad real."""
-    if not ATR_SL_ACTIVO or atr <= 0:
-        pct = ATR_SL_MINIMO_PERCENT
-        return round(precio*(1-pct) if side=="BUY" else precio*(1+pct), 4)
-    dist = max(atr * ATR_SL_MULTIPLICADOR, precio * ATR_SL_MINIMO_PERCENT)
-    return round(precio - dist if side=="BUY" else precio + dist, 4)
-
-# ═══════════════════════════════════════════════
-# SEÑAL TÉCNICA V7.0 — TRIPLE CONFIRMACIÓN
-# ═══════════════════════════════════════════════
-def generar_senal_v8(ind, temp="15m"):
+# ══════════════════════════════════════════
+# SEÑAL — SIMPLE (RSI + EMA)
+# ══════════════════════════════════════════
+def senal(ind):
     """
-    V8.0: Señal con CUÁDRUPLE confirmación — RSI + EMA + MACD + Bollinger.
-    Solo opera cuando TODOS los indicadores apuntan a la misma dirección.
-    Elimina señales falsas en mercados laterales o manipulados.
+    Señal simple con 2 condiciones:
+    LONG:  RSI < 38  Y  tendencia EMA no bajista fuerte
+    SHORT: RSI > 62  Y  tendencia EMA no alcista fuerte
+
+    Sin bloqueo por mercado lateral.
+    Sin requerir 4 indicadores juntos.
     """
     if not ind:
-        return None, 0.0, None, "Sin datos"
+        return None, 0.0, "Sin datos"
 
-    rsi      = float(ind.get("rsi", 50))
-    tendencia= (ind.get("tendencia_ema","") or "").upper()
-    hist     = float((ind.get("macd") or {}).get("histograma", 0))
-    macd_val = float((ind.get("macd") or {}).get("macd", 0))
-    signal_val = float((ind.get("macd") or {}).get("signal", 0))
-    atr_pct  = float(ind.get("atr_percent", 0))
-    vol_rel  = float(ind.get("volumen_relativo", 1))
-    precio   = float(ind.get("precio_actual", 0))
-    bb       = ind.get("bollinger") or {}
-    bb_pos   = float(bb.get("posicion", 50))  # 0=banda inf, 100=banda sup
-    bb_ancho = float(bb.get("ancho", 0))
+    rsi  = float(ind.get("rsi", 50))
+    tend = (ind.get("tendencia_ema","") or "").upper()
+    hist = float((ind.get("macd") or {}).get("histograma", 0))
+    atr_pct = float(ind.get("atr_percent", 0))
 
-    # ── Filtros base ──────────────────────────────────
-    if atr_pct < 0.30:
-        return None, 0.0, None, f"ATR insuficiente ({atr_pct:.2f}%)"
-    
-    if bb_ancho < 1.0:
-        return None, 0.0, None, f"Bollinger muy estrecho ({bb_ancho:.2f}%) — consolidación"
+    # Filtro mínimo de volatilidad
+    if atr_pct < 0.20:
+        return None, 0.0, f"Sin volatilidad (ATR={atr_pct:.2f}%)"
 
-    # ── LONG: 4 condiciones deben cumplirse ──────────
-    # 1. RSI en zona de sobreventa (< 40)
-    # 2. Tendencia EMA alcista
-    # 3. MACD histograma positivo (cruzando al alza)
-    # 4. Precio cerca de banda inferior de Bollinger (< 35%)
-    long_rsi  = rsi < 40
-    long_ema  = "ALCISTA" in tendencia
-    long_macd = hist > 0 and macd_val > signal_val
-    long_bb   = bb_pos < 35  # precio en tercio inferior de Bollinger
+    # LONG: RSI sobrevendido
+    if rsi < RSI_SOBREVENTA:
+        # No entrar LONG si la tendencia mayor es fuertemente bajista
+        if tend == "BAJISTA_FUERTE":
+            return None, 0.0, f"RSI={rsi:.0f} pero BAJISTA_FUERTE — skip"
+        conf = 0.85 if hist > 0 else 0.72
+        razon = f"RSI={rsi:.0f} sobrevendido | {tend} | conf={int(conf*100)}%"
+        return "LONG", conf, razon
 
-    puntos_long = sum([long_rsi, long_ema, long_macd, long_bb])
-    
-    if puntos_long >= 3:  # mínimo 3 de 4 condiciones
-        conf = 0.90 if puntos_long == 4 else 0.78
-        razones = []
-        if long_rsi:  razones.append(f"RSI={rsi:.0f}")
-        if long_ema:  razones.append(tendencia)
-        if long_macd: razones.append("MACD↑")
-        if long_bb:   razones.append(f"BB={bb_pos:.0f}%")
-        return "LONG", conf, temp, f"LONG {puntos_long}/4: {' '.join(razones)}"
+    # SHORT: RSI sobrecomprado
+    if rsi > RSI_SOBRECOMPRA:
+        # No entrar SHORT si la tendencia mayor es fuertemente alcista
+        if tend == "ALCISTA_FUERTE":
+            return None, 0.0, f"RSI={rsi:.0f} pero ALCISTA_FUERTE — skip"
+        conf = 0.85 if hist < 0 else 0.72
+        razon = f"RSI={rsi:.0f} sobrecomprado | {tend} | conf={int(conf*100)}%"
+        return "SHORT", conf, razon
 
-    # ── SHORT: 4 condiciones deben cumplirse ─────────
-    # 1. RSI en zona de sobrecompra (> 60)
-    # 2. Tendencia EMA bajista
-    # 3. MACD histograma negativo (cruzando a la baja)
-    # 4. Precio cerca de banda superior de Bollinger (> 65%)
-    short_rsi  = rsi > 60
-    short_ema  = "BAJISTA" in tendencia
-    short_macd = hist < 0 and macd_val < signal_val
-    short_bb   = bb_pos > 65  # precio en tercio superior de Bollinger
+    return None, 0.0, f"RSI={rsi:.0f} — zona neutral"
 
-    puntos_short = sum([short_rsi, short_ema, short_macd, short_bb])
-    
-    if puntos_short >= 3:
-        conf = 0.90 if puntos_short == 4 else 0.78
-        razones = []
-        if short_rsi:  razones.append(f"RSI={rsi:.0f}")
-        if short_ema:  razones.append(tendencia)
-        if short_macd: razones.append("MACD↓")
-        if short_bb:   razones.append(f"BB={bb_pos:.0f}%")
-        return "SHORT", conf, temp, f"SHORT {puntos_short}/4: {' '.join(razones)}"
+# ══════════════════════════════════════════
+# SL Y TP BASADO EN ATR
+# ══════════════════════════════════════════
+def calcular_sl_tp(precio, atr, side, pp):
+    dist_sl = max(atr * ATR_MULT_SL, precio * 0.008)  # mínimo 0.8%
+    dist_tp = dist_sl * TP_RATIO                        # siempre 2:1
 
-    return None, 0.0, None, f"Sin confluencia (L:{puntos_long}/4 S:{puntos_short}/4)"
+    if side == "BUY":
+        sl = round(precio - dist_sl, pp)
+        tp = round(precio + dist_tp, pp)
+    else:
+        sl = round(precio + dist_sl, pp)
+        tp = round(precio - dist_tp, pp)
 
-# Alias para compatibilidad
-def generar_senal_v7(ind, temp="15m"):
-    return generar_senal_v8(ind, temp)
+    return sl, tp
 
-# ═══════════════════════════════════════════════
-# HORARIO Y NOTICIAS
-# ═══════════════════════════════════════════════
-def es_horario_protegido():
-    if not HORARIO_PROTEGIDO_ACTIVO or not TZ_MERCADO:
-        return False, ""
+# ══════════════════════════════════════════
+# EJECUTAR ORDEN
+# ══════════════════════════════════════════
+def abrir_posicion(symbol, side, qty, sl, tp):
     try:
-        et  = datetime.now(TZ_MERCADO)
-        min = et.hour*60 + et.minute
-        if VENTANA_USA_INICIO_MIN <= min <= VENTANA_USA_FIN_MIN:
-            return True, "Apertura USA 08:30-09:30 ET"
-        if et.weekday()==VENTANA_FED_DIA and VENTANA_FED_INICIO_MIN <= min <= VENTANA_FED_FIN_MIN:
-            return True, "FOMC miércoles"
-        return False, ""
-    except Exception:
-        return False, ""
-
-def en_pausa_por_noticias():
-    global pausa_noticias_hasta, ultimo_check_noticias
-    if not NOTICIAS_PROTECCION_ACTIVA:
-        return False, ""
-    now = datetime.now()
-    if pausa_noticias_hasta and now < pausa_noticias_hasta:
-        mins = int((pausa_noticias_hasta - now).total_seconds()/60)
-        return True, f"Pausa noticias ({mins} min)"
-    if time.time() - ultimo_check_noticias < NOTICIAS_CHECK_INTERVALO:
-        return False, ""
-    ultimo_check_noticias = time.time()
-    if not CRYPTO_PANIC_KEY:
-        return False, ""
-    try:
-        r = requests.get(CRYPTO_PANIC_URL,
-            params={"auth_token":CRYPTO_PANIC_KEY,"kind":"news","public":"true","currencies":"BTC,ETH,SOL,BNB,XRP"},
-            timeout=10)
-        for post in (r.json() if r.ok else {}).get("results",[])[:15]:
-            titulo = (post.get("title") or "").lower()
-            if any(kw in titulo for kw in NOTICIAS_KEYWORDS_ALTO_IMPACTO):
-                pausa_noticias_hasta = now + timedelta(minutes=PAUSA_NOTICIAS_MINUTOS)
-                log(f"📰 Noticia impacto detectada. Pausa {PAUSA_NOTICIAS_MINUTOS}min")
-                return True, "Noticia de alto impacto"
-    except Exception:
-        pass
-    return False, ""
-
-
-# ═══════════════════════════════════════════════
-# ÓRDENES SL/TP
-# ═══════════════════════════════════════════════
-def cancelar_ordenes_sl(client, symbol):
-    try:
-        for o in client.futures_get_open_orders(symbol=symbol):
-            if o["type"] in ["STOP_MARKET","STOP","STOP_LOSS_MARKET"]:
-                client.futures_cancel_order(symbol=symbol, orderId=o["orderId"])
-    except Exception as e:
-        if LOG_DETALLADO:
-            log(f"⚠️ Cancelar SL {symbol}: {e}")
-
-def existe_orden_sl_abierta(client, symbol):
-    TIPOS = ("STOP","STOP_MARKET","STOP_LOSS","STOP_LOSS_MARKET","TAKE_PROFIT","TAKE_PROFIT_MARKET")
-    try:
-        for o in client.futures_get_open_orders(symbol=symbol):
-            if any(t in (o.get("type","") or "").upper() for t in TIPOS):
-                return True
-    except Exception:
-        pass
-    return False
-
-def crear_orden_sl(client, symbol, side, precio, cantidad):
-    try:
-        info = obtener_exchange_info(client)
-        si   = next((s for s in info["symbols"] if s["symbol"]==symbol), None)
-        if si:
-            precio = round(precio, int(si["pricePrecision"]))
-        client.futures_create_order(
-            symbol=symbol, side=side, type="STOP_MARKET",
-            stopPrice=str(precio), closePosition="true"
+        # Orden de mercado
+        ord = client.futures_create_order(
+            symbol=symbol, side=side, type="MARKET", quantity=qty
         )
-        return True, False
-    except Exception as e:
-        err = str(e)
-        if "-4045" in err or "-4130" in err:
-            return False, True   # ya protegido
-        log(f"   ⚠️ Error SL {symbol}: {e}")
-        return False, False
+        log(f"   ✅ Orden {side} {qty} {symbol} — ID={ord['orderId']}")
 
-def ejecutar_orden(client, symbol, side, cantidad, tp=None, sl=None):
-    try:
-        orden    = client.futures_create_order(symbol=symbol, side=side, type="MARKET", quantity=cantidad)
-        order_id = orden["orderId"]
-        log(f"   ✅ Orden ejecutada ID={order_id}")
-        if tp and sl:
-            info = obtener_exchange_info(client)
-            si   = next((s for s in info["symbols"] if s["symbol"]==symbol), None)
-            if si:
-                pp = int(si["pricePrecision"])
-                tp = round(tp, pp)
-                sl = round(sl, pp)
-            # Take Profit
-            try:
-                tp_side = "SELL" if side=="BUY" else "BUY"
-                client.futures_create_order(
-                    symbol=symbol, side=tp_side, type="TAKE_PROFIT_MARKET",
-                    stopPrice=tp, closePosition=True
-                )
-                log(f"   📈 TP: ${tp}")
-            except Exception as e:
-                log(f"   ⚠️ TP error: {e}")
-            # Stop Loss
-            sl_side = "SELL" if side=="BUY" else "BUY"
-            ok, _ = crear_orden_sl(client, symbol, sl_side, sl, cantidad)
-            if ok:
-                log(f"   📉 SL: ${sl}")
-            else:
-                log(f"   ⚠️ SL no creado — Guardian vigilará")
-        return True, order_id
-    except Exception as e:
-        log(f"⚠️ Error ejecutar orden {symbol}: {e}")
-        return False, None
+        pp = precision_precio(symbol)
+        sl = round(sl, pp)
+        tp = round(tp, pp)
 
-# ═══════════════════════════════════════════════
-# TRAILING STOP — V7.0
-# ═══════════════════════════════════════════════
-def actualizar_trailing_sl(client):
+        # Take Profit
+        tp_side = "SELL" if side == "BUY" else "BUY"
+        try:
+            client.futures_create_order(
+                symbol=symbol, side=tp_side,
+                type="TAKE_PROFIT_MARKET",
+                stopPrice=tp, closePosition=True
+            )
+            log(f"   📈 TP: ${tp}")
+        except Exception as e:
+            log(f"   ⚠️ TP error: {e}")
+
+        # Stop Loss
+        try:
+            client.futures_create_order(
+                symbol=symbol, side=tp_side,
+                type="STOP_MARKET",
+                stopPrice=sl, closePosition="true"
+            )
+            log(f"   📉 SL: ${sl}")
+        except Exception as e:
+            log(f"   ⚠️ SL error: {e}")
+
+        return True
+    except Exception as e:
+        log(f"⚠️ Error abriendo {symbol}: {e}")
+        return False
+
+# ══════════════════════════════════════════
+# GUARDIAN — cierra posiciones en pérdida extrema
+# ══════════════════════════════════════════
+def guardian():
     try:
-        for pos in obtener_posiciones(client):
-            symbol   = pos["symbol"]
-            cantidad = float(pos.get("positionAmt",0))
-            if cantidad == 0:
-                posiciones_tracking.pop(symbol, None)
+        for p in pos_abiertas():
+            symbol = p["symbol"]
+            qty    = float(p.get("positionAmt", 0))
+            entry  = float(p.get("entryPrice", 0))
+            mark   = float(p.get("markPrice", 0))
+            pnl    = float(p.get("unRealizedProfit", 0))
+            side   = "LONG" if qty > 0 else "SHORT"
+
+            if entry <= 0:
                 continue
-            precio  = float(pos["markPrice"])
-            entry   = float(pos["entryPrice"])
-            side    = "LONG" if cantidad > 0 else "SHORT"
-            if symbol not in posiciones_tracking:
-                posiciones_tracking[symbol] = {"side":side,"best_price":precio,"entry":entry,"last_sl":None}
-                log(f"📍 Nueva pos detectada: {symbol} {side}")
-            t = posiciones_tracking[symbol]
-            if side == "LONG":
-                if precio > t["best_price"]:
-                    t["best_price"] = precio
-                g = (t["best_price"] - entry) / entry
-                sl_nuevo = None
-                if g >= UMBRAL_TRAILING:
-                    sl_nuevo = t["best_price"] * (1 - TRAILING_SL_PERCENT)
-                elif g >= UMBRAL_BREAKEVEN:
-                    sl_nuevo = entry * 1.002
-                if sl_nuevo and (t["last_sl"] is None or sl_nuevo > t["last_sl"]):
-                    cancelar_ordenes_sl(client, symbol)
-                    ok, _ = crear_orden_sl(client, symbol, "SELL", sl_nuevo, abs(cantidad))
-                    if ok:
-                        t["last_sl"] = sl_nuevo
-                        tipo = "Trailing" if g >= UMBRAL_TRAILING else "Break-Even"
-                        log(f"📈 {tipo} ({symbol}): ${sl_nuevo:.4f}")
-            else:  # SHORT
-                if precio < t["best_price"]:
-                    t["best_price"] = precio
-                g = (entry - t["best_price"]) / entry
-                sl_nuevo = None
-                if g >= UMBRAL_TRAILING:
-                    sl_nuevo = t["best_price"] * (1 + TRAILING_SL_PERCENT)
-                elif g >= UMBRAL_BREAKEVEN:
-                    sl_nuevo = entry * 0.998
-                if sl_nuevo and (t["last_sl"] is None or sl_nuevo < t["last_sl"]):
-                    cancelar_ordenes_sl(client, symbol)
-                    ok, _ = crear_orden_sl(client, symbol, "BUY", sl_nuevo, abs(cantidad))
-                    if ok:
-                        t["last_sl"] = sl_nuevo
-                        tipo = "Trailing" if g >= UMBRAL_TRAILING else "Break-Even"
-                        log(f"📉 {tipo} ({symbol}): ${sl_nuevo:.4f}")
-    except Exception as e:
-        log(f"⚠️ Error trailing: {e}")
 
-# ═══════════════════════════════════════════════
-# GUARDIAN DE POSICIONES
-# ═══════════════════════════════════════════════
-def guardian_posiciones(client):
-    try:
-        for pos in obtener_posiciones(client):
-            symbol   = pos["symbol"]
-            cantidad = float(pos.get("positionAmt",0))
-            if cantidad == 0:
-                continue
-            try:
-                entry  = float(pos["entryPrice"])
-                mark   = float(pos["markPrice"])
-                pnl    = float(pos.get("unRealizedProfit",0))
-                side   = "LONG" if cantidad > 0 else "SHORT"
-                if entry <= 0:
-                    continue
-                notional = entry * abs(cantidad)
-                pnl_pct  = (pnl / notional) * 100 if notional > 0 else 0
-                # Cierre de emergencia
-                if pnl_pct / 100 < MAX_PERDIDA_PERMITIDA:
-                    log(f"🚨 GUARDIAN: Cerrando {symbol} {side} PNL={pnl_pct:.2f}%")
-                    close = "SELL" if cantidad > 0 else "BUY"
+            notional = entry * abs(qty)
+            pnl_pct  = (pnl / notional) if notional > 0 else 0
+
+            if pnl_pct < -MAX_PERDIDA_POSICION:
+                log(f"🚨 GUARDIAN cerrando {symbol} {side} — PNL={pnl_pct*100:.1f}%")
+                close = "SELL" if qty > 0 else "BUY"
+                try:
                     client.futures_cancel_all_open_orders(symbol=symbol)
-                    client.futures_create_order(symbol=symbol, side=close,
-                        type="MARKET", quantity=abs(cantidad), reduceOnly="true")
-                    stats_semanales["cierres_guardian"] += 1
-                    enviar_telegram(f"🚨 *Guardian cerró {symbol}*\nPNL: {pnl_pct:.2f}%")
-            except Exception as e:
-                log(f"⚠️ Guardian {symbol}: {e}")
+                    client.futures_create_order(
+                        symbol=symbol, side=close,
+                        type="MARKET", quantity=abs(qty),
+                        reduceOnly="true"
+                    )
+                    tg(f"🚨 Guardian cerró {symbol}\nPNL: {pnl_pct*100:.1f}% (${pnl:.2f})")
+                except Exception as e:
+                    log(f"⚠️ Error guardian {symbol}: {e}")
     except Exception as e:
         log(f"⚠️ Error guardian: {e}")
 
-def verificar_ordenes_sl_existen(client):
+# ══════════════════════════════════════════
+# MONITOREO DE TRADES CERRADOS
+# ══════════════════════════════════════════
+def trades_cerrados():
+    global _notificadas
     try:
-        for pos in obtener_posiciones(client):
-            symbol   = pos["symbol"]
-            cantidad = float(pos.get("positionAmt",0))
-            if cantidad == 0:
-                continue
-            now = time.time()
-            if now < _sl_retry_cooldown_until.get(symbol, 0):
-                continue
-            if now - _sl_verificados.get(symbol, 0) < 120:
-                continue
-            if not existe_orden_sl_abierta(client, symbol):
-                entry = float(pos["entryPrice"])
-                mark  = float(pos["markPrice"])
-                side  = "LONG" if cantidad > 0 else "SHORT"
-                PCT   = ATR_SL_MINIMO_PERCENT
-                if side == "LONG":
-                    sl_p  = min(entry*(1-PCT), mark*0.995)
-                    sl_s  = "SELL"
-                else:
-                    sl_p  = max(entry*(1+PCT), mark*1.005)
-                    sl_s  = "BUY"
-                ok, already = crear_orden_sl(client, symbol, sl_s, sl_p, abs(cantidad))
-                if ok:
-                    log(f"⚠️ SL emergencia {symbol}: ${sl_p:.4f}")
-                    _sl_verificados[symbol] = now
-                elif already:
-                    _sl_verificados[symbol] = now + 3600
-                else:
-                    _sl_retry_cooldown_until[symbol] = now + SL_REINTENTO_COOLDOWN
-            else:
-                _sl_verificados[symbol] = now
-    except Exception as e:
-        log(f"⚠️ Error verificar SL: {e}")
-
-def verificar_posiciones_cerradas(client):
-    global posiciones_notificadas
-    try:
-        for trade in client.futures_account_trades(limit=20):
-            pnl = float(trade.get("realizedPnl",0))
+        trades = client.futures_account_trades(limit=20)
+        for t in trades:
+            pnl = float(t.get("realizedPnl", 0))
             if pnl == 0:
                 continue
-            symbol = trade.get("symbol","")
-            key    = f"{trade.get('orderId','')}_{symbol}_{pnl}"
-            if key in posiciones_notificadas:
+            sym = t.get("symbol","")
+            key = f"{t.get('orderId','')}_{sym}_{pnl}"
+            if key in _notificadas:
                 continue
-            posiciones_notificadas.add(key)
-            if len(posiciones_notificadas) > 5000:
-                posiciones_notificadas = set(list(posiciones_notificadas)[-2500:])
+            _notificadas.add(key)
+            if len(_notificadas) > 3000:
+                _notificadas = set(list(_notificadas)[-1500:])
+
+            stats["pnl_dia"] = stats.get("pnl_dia", 0) + pnl
             if pnl > 0:
-                stats_semanales["ganados"]      += 1
-                stats_semanales["monto_ganado"] += pnl
-                log(f"💰 Ganado ({symbol}): +${pnl:.2f}")
+                stats["ganados"] = stats.get("ganados", 0) + 1
+                log(f"💰 Ganado ({sym}): +${pnl:.2f}")
             else:
-                stats_semanales["perdidos"]       += 1
-                stats_semanales["monto_perdido"]  += abs(pnl)
-                log(f"💸 Perdido ({symbol}): -${abs(pnl):.2f}")
-            actualizar_stats_trade(pnl)
+                stats["perdidos"] = stats.get("perdidos", 0) + 1
+                log(f"💸 Perdido ({sym}): -${abs(pnl):.2f}")
+
             try:
-                registrar_trade_cerrado(symbol, pnl)
+                registrar_trade_cerrado(sym, pnl)
             except Exception:
                 pass
-            if cm is not None:
+
+            if cm:
                 try:
-                    ev = cm.actualizar(pnl, calcular_metricas_riesgo(dias=30), log_fn=log)
-                    if ev.get("reduccion"):
-                        enviar_telegram(f"🔴 *Alerta Capital — Reducción*\n{cm.resumen_telegram()}")
-                    elif ev.get("escalado"):
-                        enviar_telegram(f"📈 *Capital Escalado*\n{cm.resumen_telegram()}")
+                    cm.actualizar(pnl, calcular_metricas_riesgo(dias=30), log_fn=log)
                 except Exception:
                     pass
     except Exception as e:
-        if LOG_DETALLADO:
-            log(f"⚠️ Error posiciones cerradas: {e}")
+        log(f"⚠️ trades_cerrados: {e}")
 
-def verificar_tiempo_posiciones(client):
-    try:
-        for pos in obtener_posiciones(client):
-            symbol   = pos["symbol"]
-            cantidad = float(pos.get("positionAmt",0))
-            if cantidad == 0:
-                continue
-            try:
-                trades = client.futures_account_trades(symbol=symbol, limit=50)
-                t0     = next((t for t in trades if float(t.get("realizedPnl",0))==0), None)
-                if not t0:
-                    continue
-                dias = (datetime.now() - datetime.fromtimestamp(int(t0["time"])/1000)).days
-                if dias >= MAX_DIAS_POSICION:
-                    side = "SELL" if cantidad > 0 else "BUY"
-                    pnl  = float(pos.get("unRealizedProfit",0))
-                    client.futures_create_order(symbol=symbol, side=side, type="MARKET", quantity=abs(cantidad))
-                    log(f"⏰ {symbol} cerrado por tiempo ({dias}d). PNL: ${pnl:.2f}")
-            except Exception:
-                pass
-    except Exception as e:
-        log(f"⚠️ Error tiempo posiciones: {e}")
+# ══════════════════════════════════════════
+# CICLO PRINCIPAL DE ANÁLISIS
+# ══════════════════════════════════════════
+def analizar():
+    bal       = balance()
+    bal_disp  = balance_disponible()
 
-def verificar_funding_vs_pnl(client):
-    try:
-        for pos in obtener_posiciones(client):
-            symbol   = pos["symbol"]
-            cantidad = float(pos.get("positionAmt",0))
-            if cantidad == 0:
-                continue
-            upnl = float(pos.get("unRealizedProfit",0))
-            try:
-                start = int((time.time()-48*3600)*1000)
-                income= client.futures_income_history(symbol=symbol,incomeType="FUNDING_FEE",startTime=start,limit=20)
-                total_fee = sum(float(i.get("income",0)) for i in income)
-                if upnl > 0 and abs(total_fee) > upnl:
-                    side = "SELL" if cantidad > 0 else "BUY"
-                    client.futures_create_order(symbol=symbol,side=side,type="MARKET",quantity=abs(cantidad))
-                    log(f"💸 {symbol} cerrado: funding ${total_fee:.2f} > pnl ${upnl:.2f}")
-            except Exception:
-                pass
-    except Exception as e:
-        log(f"⚠️ Error funding: {e}")
+    if not puede_operar(bal):
+        return
 
-def ajustar_tp_dinamico(client):
-    try:
-        for pos in obtener_posiciones(client):
-            symbol   = pos["symbol"]
-            cantidad = float(pos.get("positionAmt",0))
-            if cantidad == 0:
-                continue
-            upnl  = float(pos.get("unRealizedProfit",0))
-            entry = float(pos["entryPrice"])
-            mark  = float(pos["markPrice"])
-            if upnl <= 0:
-                continue
-            now = time.time()
-            if now < _tp_dinamico_cooldown.get(symbol,0):
-                continue
-            try:
-                trades = client.futures_account_trades(symbol=symbol,limit=50)
-                t0     = next((t for t in trades if float(t.get("realizedPnl",0))==0),None)
-                if not t0:
-                    continue
-                dias = (datetime.now()-datetime.fromtimestamp(int(t0["time"])/1000)).days
-                if dias < TP_DINAMICO_DIAS:
-                    continue
-                side = "LONG" if cantidad > 0 else "SHORT"
-                if side=="LONG":
-                    nuevo_tp = max(entry*(1+TP_DINAMICO_PERCENT), mark*1.003)
-                else:
-                    nuevo_tp = min(entry*(1-TP_DINAMICO_PERCENT), mark*0.997)
-                # Cancelar TPs existentes
-                for o in [x for x in client.futures_get_open_orders(symbol=symbol) if x["type"]!="STOP_MARKET"]:
-                    client.futures_cancel_order(symbol=symbol,orderId=o["orderId"])
-                time.sleep(0.5)
-                si = next((s for s in obtener_exchange_info(client)["symbols"] if s["symbol"]==symbol),None)
-                if si:
-                    nuevo_tp = round(nuevo_tp, int(si["pricePrecision"]))
-                tp_side = "SELL" if cantidad > 0 else "BUY"
-                client.futures_create_order(symbol=symbol,side=tp_side,type="TAKE_PROFIT_MARKET",
-                    stopPrice=nuevo_tp,closePosition=True,timeInForce="GTE_GTC")
-                log(f"📈 TP dinámico {symbol}: ${nuevo_tp:.4f}")
-                _tp_dinamico_cooldown[symbol] = now + TP_DINAMICO_COOLDOWN
-            except Exception as e:
-                err = str(e)
-                if "-4045" not in err and "-4130" not in err:
-                    log(f"⚠️ TP dinámico {symbol}: {e}")
-                _tp_dinamico_cooldown[symbol] = now + TP_DINAMICO_COOLDOWN
-    except Exception as e:
-        log(f"⚠️ Error ajustar TP: {e}")
+    pos_act   = pos_abiertas()
+    n_pos     = len(pos_act)
+    espacios  = MAX_POSICIONES - n_pos
+    syms_pos  = simbolos_con_pos()
 
+    log(f"💰 ${bal:.2f} | Pos={n_pos}/{MAX_POSICIONES} | Espacios={espacios}")
 
-# ═══════════════════════════════════════════════
-# REPORTES
-# ═══════════════════════════════════════════════
-def es_viernes_18h():
-    a = hora_local()
-    return a.weekday()==4 and a.hour==18
+    if espacios <= 0:
+        log("📊 Posiciones llenas — monitoreando")
+        return
 
-def es_hora_resumen_diario():
-    return hora_local().hour == 22
+    # Calcular capital disponible para operar (85% del total)
+    capital_op = (cm.get_capital_operativo() if cm else bal) * 0.85
+    monto      = capital_op * RIESGO_PCT
+    monto      = max(5.0, round(monto, 2))
 
-def enviar_resumen_diario(client):
-    global _ultimo_resumen_diario
-    try:
-        fecha  = hora_local().strftime("%d/%m/%Y")
-        bal    = obtener_balance(client)
-        registrar_balance_diario(hora_local().strftime("%Y-%m-%d"), balance_fin=bal)
-        met    = generar_resumen_metricas(_ia_senales_total, _ia_senales_validadas, None)
-        pnl    = stats_diarias.get("pnl_dia", 0)
-        emoji  = "📈" if pnl >= 0 else "📉"
-        bloque = cm.resumen_telegram() if cm else ""
-        msg = (f"📊 *RESUMEN DIARIO {BOT_VERSION}*\n📅 {fecha}\n\n"
-               f"💵 *Balance:* `${bal:.2f}`\n{emoji} *PNL Hoy:* `${pnl:+.2f}`\n\n"
-               f"{bloque}\n\n{met}\n\n🤖 {BOT_VERSION} Activo ✅")
-        enviar_telegram(msg)
-        _ultimo_resumen_diario = {"fecha":fecha,"balance":round(bal,2),"pnl_dia":round(pnl,2),"timestamp":hora_local().isoformat()}
-        try:
-            enviar_push_notification(f"📊 Resumen {fecha}",f"Balance: ${bal:.2f} | PNL: ${pnl:+.2f}",{"type":"resumen_diario"})
-        except Exception:
-            pass
-    except Exception as e:
-        log(f"⚠️ Error resumen diario: {e}")
+    log(f"🔍 Analizando {len(PARES)} pares | Monto/trade: ${monto:.2f}")
 
-def enviar_resumen_semanal(client):
-    global stats_semanales, _ultimo_resumen_semanal
-    try:
-        bal_actual  = obtener_balance(client)
-        met         = calcular_metricas_riesgo(dias=7)
-        bal_inicio  = stats_semanales.get("balance_inicio_semana", BALANCE_INICIAL_PROYECTO) or bal_actual
-        roi         = ((bal_actual - bal_inicio) / bal_inicio * 100) if bal_inicio > 0 else 0
-        wr          = met.get("win_rate", 0.0)
-        pf          = met.get("profit_factor", 0.0)
-        total       = met.get("total_trades", 0)
-        ganados     = int(round(total * wr / 100.0))
-        roi_str     = f"+{roi:.2f}%" if roi >= 0 else f"{roi:.2f}%"
-        msg = (f"📊 RESUMEN SEMANAL {BOT_VERSION}\n🗓️ {hora_local().strftime('%d/%m/%Y')}\n\n"
-               f"💰 Balance inicio: ${bal_inicio:,.2f}\n💸 Balance actual: ${bal_actual:,.2f}\n"
-               f"📈 ROI: {roi_str}\n\n✅ Ganados: {ganados}\n❌ Perdidos: {total-ganados}\n"
-               f"🎯 WinRate: {wr:.1f}%\n⚖️ Profit Factor: {pf:.2f}\n\n🤖 Estado: ACTIVO")
-        enviar_telegram(msg)
-        _ultimo_resumen_semanal = {"balance_inicial":round(bal_inicio,2),"balance_actual":round(bal_actual,2),
-            "roi_semanal":round(roi,2),"trades_ganados":ganados,"trades_perdidos":total-ganados,
-            "win_rate":round(wr,1),"profit_factor":round(pf,2),"timestamp":hora_local().isoformat()}
-        stats_semanales.update({"balance_inicio_semana":bal_actual,"ganados":0,"perdidos":0,
-            "monto_ganado":0,"monto_perdido":0,"cierres_guardian":0,"ultimo_resumen":hora_local()})
-        try:
-            enviar_push_notification("📊 Resumen Semanal",f"ROI: {roi_str} | WR: {wr:.1f}%",{"type":"resumen_semanal"})
-        except Exception:
-            pass
-    except Exception as e:
-        log(f"⚠️ Error resumen semanal: {e}")
-
-# ═══════════════════════════════════════════════
-# CICLO DE TRADING — V7.0
-# ═══════════════════════════════════════════════
-def ejecutar_trading(client):
-    global _ia_senales_total
-
-    log("\n" + "="*60)
-    log(f"🧠 {BOT_VERSION}: Iniciando ciclo de análisis...")
-    log("="*60)
-
-    try:
-        saldo_total      = obtener_balance(client)
-        saldo_disponible = obtener_balance_disponible(client)
-        if saldo_total < 5:
-            log("⚠️ Balance insuficiente")
-            return
-        log(f"💰 Total: ${saldo_total:.2f} | Libre: ${saldo_disponible:.2f}")
-
-        # Cooldown Capital Manager
-        if cm is not None and not cm.puede_operar():
-            log_throttled("cm_cool","⏳ COOLDOWN capital — trading bloqueado",300)
-            return
-
-        # Escudo de capital (15% intocable)
-        reserva = saldo_total * ESCUDO_SEGURO
-        if saldo_disponible <= reserva:
-            log(f"🛡️ Reserva activa: ${saldo_disponible:.2f} ≤ ${reserva:.2f}")
-            return
-
-        pos_abiertas = contar_posiciones_abiertas(client)
-        espacios     = MAX_POSICIONES - pos_abiertas
-        log(f"📊 Posiciones: {pos_abiertas}/{MAX_POSICIONES} | Espacios: {espacios}")
+    for symbol in PARES:
         if espacios <= 0:
-            log("📊 Posiciones llenas. Monitoreando...")
-            return
+            break
+        if symbol in syms_pos:
+            continue
 
-        simbolos_pos = obtener_simbolos_con_posicion(client)
-        simbolos     = obtener_simbolos_futuros(client)
-        
-        # ── V8.0: Detector de tendencia global BTC ───────────
-        tendencia_global = obtener_tendencia_mercado_global(client)
-        log(f"🌍 Tendencia global BTC: {tendencia_global}")
-        
-        if tendencia_global == "LATERAL":
-            log("⏸️ Mercado LATERAL global — sin operaciones. Esperando dirección.")
-            return
-        
-        log(f"🔍 Analizando {len(simbolos)} pares en mercado {tendencia_global}...")
-
-        oportunidades = []
-
-        for symbol in simbolos:
-            if symbol in simbolos_pos:
+        try:
+            # Obtener velas 15m
+            v = velas(symbol, "15m", 200)
+            if not v or len(v) < 100:
                 continue
-            try:
-                # Marco 1H para filtro macro
-                velas_1h = obtener_velas(client, symbol, "1h", 250)
-                if not velas_1h or len(velas_1h) < 200:
-                    continue
-                klines_1h = [[v["timestamp"],v["open"],v["high"],v["low"],v["close"],v["volume"]] for v in velas_1h[:-1]]
-                ind_1h    = analizar_indicadores_completo(klines_1h)
-                if not ind_1h or not ind_1h.get("ema200"):
-                    continue
-                ema200_1h = float(ind_1h["ema200"])
-                precio_1h = float(ind_1h["precio_actual"])
 
-                # Timeframe operativo 15m
-                velas_15m = obtener_velas(client, symbol, "15m", VELAS_CANTIDAD)
-                if not velas_15m or len(velas_15m) < 200:
-                    continue
-                klines_15m = [[v["timestamp"],v["open"],v["high"],v["low"],v["close"],v["volume"]] for v in velas_15m[:-1]]
-                ind        = analizar_indicadores_completo(klines_15m)
-                if not ind:
-                    continue
+            # Calcular indicadores
+            klines = [[x["timestamp"],x["open"],x["high"],x["low"],x["close"],x["volume"]]
+                      for x in v[:-1]]
+            ind = analizar_indicadores_completo(klines)
+            if not ind:
+                continue
 
-                precio = ind["precio_actual"]
-                rv     = float(ind.get("volumen_relativo",1))
-                tend   = (ind.get("tendencia_ema","") or "").upper()
-                rsi    = float(ind.get("rsi",50))
+            precio = float(ind["precio_actual"])
+            atr    = float(ind.get("atr", 0))
 
-                # ── Pre-filtros ──────────────────────────────────
-                if rv < 0.50:   # Sin liquidez
-                    continue
-                if "LATERAL" in tend and 47 <= rsi <= 53:   # Mercado plano
-                    continue
+            # Señal simple
+            accion, conf, razon = senal(ind)
+            if not accion:
+                log(f"   ⏭️ {symbol}: {razon}")
+                continue
 
-                # ── Señal V8.0 triple confirmación ───────────────
-                accion, conf, temp, razon = generar_senal_v7(ind, "15m")
-                if not accion:
-                    if LOG_DETALLADO:
-                        log(f"   ⏭️ {symbol}: {razon}")
-                    continue
+            log(f"   ✅ {symbol} {accion} | {razon}")
 
-                # ── V8.0: Filtro alineación con tendencia global ──
-                # Si BTC bajista → solo SHORT. Si alcista → solo LONG.
-                if tendencia_global == "BAJISTA" and accion == "LONG":
-                    if LOG_DETALLADO:
-                        log(f"   🚫 {symbol}: LONG bloqueado — mercado global BAJISTA")
-                    continue
-                if tendencia_global == "ALCISTA" and accion == "SHORT":
-                    if LOG_DETALLADO:
-                        log(f"   🚫 {symbol}: SHORT bloqueado — mercado global ALCISTA")
-                    continue
+            # Calcular SL y TP
+            pp = precision_precio(symbol)
+            sl, tp = calcular_sl_tp(precio, atr, "BUY" if accion=="LONG" else "SELL", pp)
 
-                # ── Filtro macro 1H (EMA200) ─────────────────────
-                if accion=="LONG" and precio_1h < ema200_1h:
-                    if LOG_DETALLADO:
-                        log(f"   🚫 {symbol}: LONG bajo EMA200-1H ${ema200_1h:.4f}")
-                    continue
-                if accion=="SHORT" and precio_1h > ema200_1h:
-                    if LOG_DETALLADO:
-                        log(f"   🚫 {symbol}: SHORT sobre EMA200-1H ${ema200_1h:.4f}")
-                    continue
-
-                if conf < CONFIANZA_MINIMA:
-                    continue
-
-                _ia_senales_total += 1
-
-                # Modo mercado
-                atr_pct   = ind.get("atr_percent",0)
-                boll_ancho= (ind.get("bollinger") or {}).get("ancho",0)
-                modo      = "RANGE" if ("LATERAL" in tend and atr_pct<1.2 and boll_ancho<8) else "TREND"
-
-                log(f"   📊 {symbol} | {accion} | Conf={int(conf*100)}% | {razon[:55]}")
-                oportunidades.append({
-                    "symbol":symbol,"accion":accion,"confianza":conf,
-                    "temporalidad":temp or "15m","modo_mercado":modo,
-                    "razon":razon,"precio_actual":precio,"indicadores":ind
-                })
-                try:
-                    registrar_decision(symbol,accion,conf,temp or "15m",razon[:200],50,True)
-                except Exception:
-                    pass
-
-            except Exception as e:
-                log(f"   ⚠️ Error {symbol}: {e}")
-            time.sleep(TIEMPO_POR_ACTIVO)
-
-        oportunidades.sort(key=lambda x: x["confianza"], reverse=True)
-        log(f"\n🎯 Oportunidades: {len(oportunidades)}")
-
-        ejecutadas = 0
-        for op in oportunidades:
-            if ejecutadas >= espacios:
-                break
-
-            # Verificar drawdown antes de cada orden
-            if not verificar_drawdown_diario(obtener_balance_total(client)):
-                log("🛑 Drawdown detectado. Deteniendo ejecución.")
-                break
-
-            symbol  = op["symbol"]
-            accion  = op["accion"]
-            conf    = op["confianza"]
-            temp    = op["temporalidad"]
-            precio  = op["precio_actual"]
-            modo    = op["modo_mercado"]
-            razon   = op["razon"]
-            ind     = op["indicadores"]
-
-            monto = calcular_monto(saldo_total)
-            if modo == "RANGE":
-                monto *= FACTOR_MONTO_RANGO
-
-            # TP/SL
-            cfg_src = TP_SL_RANGO_CONFIG if modo=="RANGE" else TP_SL_CONFIG
-            cfg     = cfg_src.get(temp, cfg_src.get("15m", {"tp":0.025,"sl":0.012}))
-            atr_val = ind.get("atr",0) if ind else 0
-
-            if accion == "LONG":
-                sl = calcular_sl_atr(precio, atr_val, "BUY")
-                tp = precio * (1 + cfg["tp"])
-            else:
-                sl = calcular_sl_atr(precio, atr_val, "SELL")
-                tp = precio * (1 - cfg["tp"])
-
-            # Verificar ratio R:R mínimo 2:1
-            tp_dist = abs(tp - precio)
-            sl_dist = abs(sl - precio)
-            rr      = tp_dist / sl_dist if sl_dist > 0 else 0
+            # Verificar ratio R:R
+            dist_sl = abs(precio - sl)
+            dist_tp = abs(precio - tp)
+            rr = dist_tp / dist_sl if dist_sl > 0 else 0
             if rr < 1.8:
                 log(f"   ⏭️ {symbol}: R:R={rr:.1f} insuficiente")
                 continue
 
-            # Verificar EV positivo
-            ev, p_win = calcular_ev_neto(conf, tp_dist/precio, sl_dist/precio, modo)
-            if ev < EV_MINIMO:
-                log(f"   ⏭️ {symbol}: EV={ev*100:+.3f}% negativo")
+            # Verificar EV
+            sl_pct = dist_sl / precio
+            tp_pct = dist_tp / precio
+            p_win  = max(0.45, min(0.85, conf))
+            ev     = (p_win * tp_pct) - ((1-p_win) * sl_pct) - FEE_TOTAL
+            if ev <= 0:
+                log(f"   ⏭️ {symbol}: EV={ev*100:.2f}% negativo")
                 continue
 
-            configurar_apalancamiento(client, symbol, APALANCAMIENTO)
-            cantidad = calcular_cantidad(client, symbol, monto * APALANCAMIENTO, precio)
+            # Configurar apalancamiento y calcular cantidad
+            set_leverage(symbol, APALANCAMIENTO)
+            side = "BUY" if accion == "LONG" else "SELL"
+            qty  = cantidad(symbol, monto * APALANCAMIENTO, precio)
 
-            if not cantidad:
-                log(f"   ⚠️ Cantidad mínima no alcanzada: {symbol}")
+            if not qty:
+                log(f"   ⚠️ {symbol}: cantidad mínima no alcanzada")
                 continue
 
-            side = "BUY" if accion=="LONG" else "SELL"
-            log(f"\n🚀 ORDEN #{ejecutadas+1}: {symbol} {accion}")
-            log(f"   💰 ${monto:.2f} × {APALANCAMIENTO}x | Qty={cantidad}")
-            log(f"   📈 TP=${tp:.4f} | 📉 SL=${sl:.4f} | R:R={rr:.1f}:1 | EV={ev*100:+.2f}%")
+            log(f"\n🚀 {symbol} {accion} | Entrada=${precio:.4f} | SL=${sl} | TP=${tp} | R:R={rr:.1f}:1")
 
-            ok, order_id = ejecutar_orden(client, symbol, side, cantidad, tp, sl)
+            ok = abrir_posicion(symbol, side, qty, sl, tp)
             if ok:
-                ejecutadas += 1
-                enviar_telegram(
-                    f"🚀 *Nueva operación {BOT_VERSION}*\n"
-                    f"📍 {symbol} *{accion}*\n"
-                    f"💰 Entrada: `${precio:.4f}`\n"
-                    f"📈 TP: `${tp:.4f}` | 📉 SL: `${sl:.4f}`\n"
-                    f"⚖️ R:R = {rr:.1f}:1 | EV = {ev*100:+.2f}%\n"
-                    f"💡 _{razon[:80]}_"
-                )
+                espacios -= 1
+                tg(f"🚀 *{BOT_VERSION} — Nueva operación*\n"
+                   f"📍 {symbol} *{accion}*\n"
+                   f"💰 Entrada: `${precio:.4f}`\n"
+                   f"📉 SL: `${sl}` | 📈 TP: `${tp}`\n"
+                   f"⚖️ R:R = {rr:.1f}:1 | EV = {ev*100:.2f}%\n"
+                   f"💡 _{razon}_")
                 try:
                     registrar_trade_abierto(
                         symbol=symbol, side=side, action=accion,
-                        entry_price=precio, quantity=cantidad,
-                        confidence=conf, temporalidad=temp,
+                        entry_price=precio, quantity=qty,
+                        confidence=conf, temporalidad="15m",
                         razon=razon[:200], ia_validado=False
                     )
                 except Exception:
                     pass
 
-        log(f"\n✅ Ciclo completado. {ejecutadas} órdenes ejecutadas.")
+        except Exception as e:
+            log(f"   ⚠️ Error {symbol}: {e}")
 
-    except Exception as e:
-        log(f"⚠️ Error en ejecutar_trading: {e}")
+        time.sleep(TIEMPO_PAR_SEG)
 
+# ══════════════════════════════════════════
+# SERVIDOR HTTP — health check
+# ══════════════════════════════════════════
+def servidor_salud():
+    PORT = int(os.getenv("PORT", 8000))
+    class H(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self):
+            try:
+                bal = balance() if client else 0
+                data = {
+                    "version": BOT_VERSION,
+                    "balance": round(bal, 2),
+                    "posiciones": len(pos_abiertas()),
+                    "max_posiciones": MAX_POSICIONES,
+                    "pnl_dia": round(stats.get("pnl_dia",0), 2),
+                    "pausado": stats.get("pausado", False),
+                    "uptime": int(time.time() - _servidor_inicio),
+                    "testnet": USAR_TESTNET,
+                    "timestamp": hora().isoformat()
+                }
+                body = json.dumps(data).encode()
+                self.send_response(200)
+                self.send_header("Content-Type","application/json")
+                self.send_header("Access-Control-Allow-Origin","*")
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+        def log_message(self, *a): pass
+    try:
+        with socketserver.TCPServer(("",PORT), H) as s:
+            s.serve_forever()
+    except Exception:
+        pass
 
-# ═══════════════════════════════════════════════
-# ARRANQUE PRINCIPAL — V7.0
-# ═══════════════════════════════════════════════
+# ══════════════════════════════════════════
+# ARRANQUE
+# ══════════════════════════════════════════
 log(f"🚀 Iniciando {BOT_VERSION}...")
-log(f"   Leverage={APALANCAMIENTO}x | Riesgo={RIESGO_POR_TRADE_PCT*100:.1f}%/trade | MaxPos={MAX_POSICIONES}")
-log(f"   ATR SL={'ON' if ATR_SL_ACTIVO else 'OFF'} | EV_MIN={EV_MINIMO} | Conf={CONFIANZA_MINIMA*100:.0f}%")
+log(f"   Leverage={APALANCAMIENTO}x | Riesgo={RIESGO_PCT*100:.0f}%/trade | MaxPos={MAX_POSICIONES}")
+log(f"   RSI_LONG<{RSI_SOBREVENTA} | RSI_SHORT>{RSI_SOBRECOMPRA} | TP_RATIO={TP_RATIO}:1")
 
+# Conexión Binance
 try:
-    api_key    = os.getenv("BINANCE_API_KEY")
-    # FIX8: soporta tanto BINANCE_SECRET como BINANCE_API_SECRET
-    api_secret = os.getenv("BINANCE_SECRET") or os.getenv("BINANCE_API_SECRET")
+    api_key    = os.getenv("BINANCE_API_KEY","")
+    api_secret = os.getenv("BINANCE_SECRET","") or os.getenv("BINANCE_API_SECRET","")
     if USAR_TESTNET:
         client = Client(api_key, api_secret, testnet=True)
         log("📡 Conectado a Binance TESTNET")
     else:
         client = Client(api_key, api_secret)
         log("📡 Conectado a Binance PRODUCCIÓN")
-    saldo = obtener_balance(client)
-    log(f"✅ Balance: ${saldo:.2f} USDT")
+    bal_inicio = balance()
+    log(f"✅ Balance: ${bal_inicio:.2f} USDT")
 except Exception as e:
-    log(f"❌ ERROR FATAL Binance: {e}")
+    log(f"❌ Error Binance: {e}")
     sys.exit(1)
 
 # Capital Manager
 try:
-    cm = CapitalManager(capital_inicial=saldo)
+    cm = CapitalManager(capital_inicial=bal_inicio)
     cm.inicializar_tabla()
     if cm.cargar_estado():
-        cm.sincronizar_con_exchange(saldo, log)
-        log(f"💼 Capital restaurado: {cm.resumen_estado()}")
+        cm.sincronizar_con_exchange(bal_inicio, log)
+        log(f"💼 Capital: {cm.resumen_estado()}")
     else:
         cm.guardar_estado()
-        log(f"💼 Primera sesión. Capital: ${saldo:.2f}")
 except Exception as e:
-    log(f"⚠️ Error CapitalManager: {e} — continuando sin él")
+    log(f"⚠️ CapitalManager: {e}")
     cm = None
 
-# FIX4: Gemini OPCIONAL — no bloquea el bot si falla
-gemini_client = None
+# Base de datos
 try:
-    gkey = os.getenv("API_KEY_GEMINI","")
-    if gkey:
-        from google import genai as _genai
-        gemini_client = _genai.Client(api_key=gkey)
-        log("🧠 Gemini IA conectado ✅")
-    else:
-        log("🧠 Gemini no configurado — modo técnico puro ✅")
-except Exception as e:
-    log(f"🧠 Gemini no disponible ({e}) — modo técnico puro ✅")
+    inicializar_db()
+    registrar_balance_diario(hora().strftime("%Y-%m-%d"), balance_inicio=bal_inicio)
+except Exception:
+    pass
 
-# Inicialización
-stats_semanales["balance_inicio_semana"] = saldo
-stats_semanales["ultimo_resumen"]        = None
-inicializar_cache_trades(client)
-inicializar_db()
-log("📦 Base de datos SQLite inicializada")
-registrar_balance_diario(hora_local().strftime("%Y-%m-%d"), balance_inicio=saldo)
+# Inicializar stats diarios
+check_nuevo_dia(bal_inicio)
 
-pos_iniciales = contar_posiciones_abiertas(client)
-if pos_iniciales > 0:
-    log(f"🛡️ {pos_iniciales} posiciones existentes. Activando Guardian + Trailing...")
-    guardian_posiciones(client)
-    verificar_ordenes_sl_existen(client)
-    actualizar_trailing_sl(client)
-else:
-    log("✅ Sin posiciones abiertas. Listo para operar.")
+# Cache de trades existentes
+try:
+    trades_hist = client.futures_account_trades(limit=100)
+    for t in trades_hist:
+        pnl = float(t.get("realizedPnl",0))
+        if pnl != 0:
+            _notificadas.add(f"{t.get('orderId','')}_{t.get('symbol','')}_{pnl}")
+    log(f"✅ Cache: {len(_notificadas)} trades previos")
+except Exception:
+    pass
 
-enviar_telegram(
-    f"🤖 *{BOT_VERSION} ONLINE*\n"
-    f"💵 Balance: `${saldo:.2f}`\n"
-    f"⚙️ Leverage: `{APALANCAMIENTO}x` | Riesgo: `{RIESGO_POR_TRADE_PCT*100:.1f}%/trade`\n"
-    f"📊 Max posiciones: `{MAX_POSICIONES}` | EV mín: `{EV_MINIMO}`\n"
-    f"🔄 Modo: `{'TESTNET' if USAR_TESTNET else 'PRODUCCIÓN'}`\n"
-    f"✅ _Watchdog 24/7 activo_"
-)
-log(f"✅ {BOT_VERSION} en marcha. Guardian + Trailing + 24/7 activos...")
+# Servidor HTTP en background
+threading.Thread(target=servidor_salud, daemon=True).start()
 
-# ═══════════════════════════════════════════════
-# BUCLE PRINCIPAL 24/7
-# ═══════════════════════════════════════════════
-ciclo             = 0
-CICLOS_ANALISIS   = 6      # 6 × 5s = 30s entre ciclos de trading
-resumen_hora      = False
-_resumen_diario_enviado = False
+# Notificar inicio
+tg(f"🤖 *{BOT_VERSION} ONLINE*\n"
+   f"💵 Balance: `${bal_inicio:.2f}`\n"
+   f"⚙️ {APALANCAMIENTO}x | {RIESGO_PCT*100:.0f}%/trade | {MAX_POSICIONES} pos máx\n"
+   f"🎯 RSI LONG<{RSI_SOBREVENTA} | SHORT>{RSI_SOBRECOMPRA}\n"
+   f"🔄 {'TESTNET' if USAR_TESTNET else 'PRODUCCIÓN'}")
+
+log(f"✅ {BOT_VERSION} listo. Analizando cada {CICLO_SEG}s...")
+
+# ══════════════════════════════════════════
+# BUCLE PRINCIPAL
+# ══════════════════════════════════════════
+ciclo = 0
+_guardian_last = 0
+_trades_last   = 0
+_resumen_enviado = False
 
 while True:
     try:
         ciclo += 1
+        now = time.time()
 
-        bal_actual = obtener_balance(client)
+        bal_actual = balance()
         if cm:
-            cm.sincronizar_con_exchange(bal_actual, log)
-        bal_equity = obtener_balance_total(client)
+            try:
+                cm.sincronizar_con_exchange(bal_actual, log)
+            except Exception:
+                pass
 
-        verificar_nuevo_dia(bal_equity)
-        puede = verificar_drawdown_diario(bal_equity)
+        # Guardian cada 10s
+        if now - _guardian_last >= 10:
+            guardian()
+            _guardian_last = now
 
-        # ── Scheduler de tareas ──────────────────────────────────
-        if GUARDIAN_ACTIVO and should_run_task("guardian", INTERVALO_GUARDIAN):
-            guardian_posiciones(client)
+        # Revisar trades cerrados cada 15s
+        if now - _trades_last >= 15:
+            trades_cerrados()
+            _trades_last = now
 
-        if GUARDIAN_ACTIVO and should_run_task("verif_sl", INTERVALO_VERIFICAR_SL):
-            verificar_ordenes_sl_existen(client)
+        # Resumen diario a las 22:00
+        if hora().hour == 22 and not _resumen_enviado:
+            tg(f"📊 *Resumen diario {BOT_VERSION}*\n"
+               f"💵 Balance: ${bal_actual:.2f}\n"
+               f"📈 PNL hoy: ${stats.get('pnl_dia',0):+.2f}\n"
+               f"✅ Ganados: {stats.get('ganados',0)} | ❌ Perdidos: {stats.get('perdidos',0)}")
+            _resumen_enviado = True
+        elif hora().hour != 22:
+            _resumen_enviado = False
 
-        if should_run_task("trailing", INTERVALO_TRAILING):
-            actualizar_trailing_sl(client)
-
-        if should_run_task("trades_cerrados", INTERVALO_TRADES_CERRADOS):
-            verificar_posiciones_cerradas(client)
-
-        # ── Resúmenes ────────────────────────────────────────────
-        if es_viernes_18h():
-            if not resumen_hora:
-                enviar_resumen_semanal(client)
-                resumen_hora = True
-        else:
-            resumen_hora = False
-
-        if es_hora_resumen_diario():
-            if not _resumen_diario_enviado:
-                enviar_resumen_diario(client)
-                _resumen_diario_enviado = True
-        else:
-            _resumen_diario_enviado = False
-
-        # ── Protección funding + TP dinámico ────────────────────
-        if FUNDING_PROTECTION and ciclo >= CICLOS_ANALISIS:
-            verificar_tiempo_posiciones(client)
-            verificar_funding_vs_pnl(client)
-            ajustar_tp_dinamico(client)
-
-        # ── Análisis de mercado ──────────────────────────────────
-        if ciclo >= CICLOS_ANALISIS:
+        # Análisis de mercado cada CICLO_SEG
+        if ciclo % 1 == 0:
+            puede = puede_operar(bal_actual)
             if puede:
-                en_h, mot_h = es_horario_protegido()
-                en_n, mot_n = en_pausa_por_noticias()
-                if en_h:
-                    log(f"⏸️ Horario protegido: {mot_h}")
-                elif en_n:
-                    log(f"⏸️ Pausa noticias: {mot_n}")
-                else:
-                    pos = contar_posiciones_abiertas(client)
-                    if pos < MAX_POSICIONES:
-                        ejecutar_trading(client)
-                    else:
-                        log(f"📊 {pos}/{MAX_POSICIONES} posiciones. Monitoreando...")
+                analizar()
             else:
-                log("⏸️ Trading pausado por drawdown diario")
-            ciclo = 0
-        else:
-            if should_run_task("log_estado", INTERVALO_RESUMEN_POSICIONES):
-                pos = contar_posiciones_abiertas(client)
-                log(f"💓 {BOT_VERSION} | Pos={pos}/{MAX_POSICIONES} | ${bal_actual:.2f}")
+                log(f"⏸️ Pausado por pérdida diaria | PNL={stats.get('pnl_dia',0):+.2f}")
 
-        time.sleep(MONITOREO_INTERVALO)
+        # Heartbeat cada 5 minutos
+        if ciclo % 10 == 0:
+            log(f"💓 {BOT_VERSION} | ${bal_actual:.2f} | Pos={len(pos_abiertas())}/{MAX_POSICIONES} | PNL={stats.get('pnl_dia',0):+.2f}")
+
+        time.sleep(CICLO_SEG)
 
     except Exception as e:
-        log(f"⚠️ Error bucle principal: {e}")
+        log(f"⚠️ Error bucle: {e}")
         time.sleep(30)
-
