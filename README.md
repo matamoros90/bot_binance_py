@@ -1,22 +1,35 @@
-# 🤖 Bot Binance — V9.0 Simple y Operativo
+# 🤖 Bot Binance — V9.1 Señal con Contexto
 
 **Estado:** Producción | Binance Futures Demo / Mainnet  
-**Filosofía:** Menos filtros = más trades = más oportunidades de ganar.
+**Filosofía:** Entrar solo cuando el mercado te da la razón — no pelear contra la tendencia.
 
 ---
 
-## 🎯 Estrategia
+## 🎯 Estrategia V9.1
 
-Señal simple con 2 condiciones (RSI + dirección EMA):
+La señal requiere **4 condiciones simultáneas** para abrir una operación:
 
-| Dirección | Condición de entrada | Filtro de exclusión |
-|-----------|---------------------|---------------------|
-| **LONG**  | RSI < 38 (sobrevendido) | No entrar si tendencia EMA es BAJISTA_FUERTE |
-| **SHORT** | RSI > 62 (sobrecomprado) | No entrar si tendencia EMA es ALCISTA_FUERTE |
+### Condiciones de entrada
 
-- SL dinámico basado en ATR × 1.5 (mínimo 0.8% del precio)
+| # | Condición | LONG | SHORT |
+|---|-----------|------|-------|
+| 1 | **RSI extremo** | RSI < 38 | RSI > 62 |
+| 2 | **Tendencia del par (EMA)** | No BAJISTA_FUERTE | No ALCISTA_FUERTE |
+| 3 | **Tendencia macro BTC 1H** | BTC no bajista (evitar comprar en caída) | BTC no alcista (evitar shortar en subida) |
+| 4 | **Confirmación de giro RSI** | RSI subiendo vs 3 velas atrás | RSI bajando vs 3 velas atrás |
+
+### Filtros siempre activos
+| Filtro | Valor | Motivo |
+|--------|-------|--------|
+| Volatilidad mínima | ATR% ≥ 0.20% | Evitar mercados dormidos |
+| Volumen mínimo | VR ≥ 1.0× (sobre el promedio) | Operar con liquidez real |
+
+### SL / TP
+- SL dinámico: ATR × 1.5 (mínimo 0.8% del precio)
 - TP siempre = 2 × SL (ratio 2:1 fijo)
-- Filtro mínimo de volatilidad: ATR% ≥ 0.20%
+
+### ¿Por qué el filtro BTC macro?
+BTC lidera el mercado crypto. Si BTC está en tendencia bajista en 1H, abrir LONGs en altcoins es nadar contra la corriente. Este filtro evitó las pérdidas más comunes del bot en V9.0 (posiciones LONG abiertas durante caída sostenida de BTC).
 
 ---
 
@@ -168,14 +181,17 @@ Escalado automático basado en rendimiento:
 
 ## 📋 Historial de versiones
 
+### V9.1 — Señal con Contexto (2026-04-19)
+- **Filtro macro BTC 1H:** no LONG si BTC bajista, no SHORT si BTC alcista (cache 30 min)
+- **Filtro de volumen:** `volumen_relativo ≥ 1.0` — solo operar con participación real del mercado
+- **Confirmación de giro RSI:** el RSI debe estar girando del extremo (comparación vs 3 velas atrás), evita entrar en caída/subida libre
+- Confianza base subida a 87%/74% (desde 85%/72%)
+
 ### V9.0 — Simple y Operativo (2026-04-18)
 - Estrategia simplificada a 2 condiciones: RSI extremo + dirección EMA
-- Sin bloqueo por mercado lateral
-- Apalancamiento reducido a 3x (conservador)
-- Máximo 3 posiciones simultáneas
+- Apalancamiento reducido a 3x (conservador), máximo 3 posiciones
 - Backtesting alineado con señal V9.0 usando `indicators.py`
-- Eliminados módulos sin uso (`expo_push.py`)
-- Eliminadas dependencias sin uso (`google-genai`, `yfinance`)
+- Eliminados módulos sin uso (`expo_push.py`, `google-genai`, `yfinance`)
 
 ### V6.7 — Aggressive Scalper (2026-04-12)
 - Alta frecuencia 5m/15m, 10x apalancamiento, 10 posiciones

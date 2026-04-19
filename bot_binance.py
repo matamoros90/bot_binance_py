@@ -1,15 +1,18 @@
 """
-BOT BINANCE V9.0 — SIMPLE Y OPERATIVO
-======================================
-FILOSOFÍA: Menos filtros = más trades = más oportunidades de ganar.
+BOT BINANCE V9.1 — SEÑAL CON CONTEXTO
+=======================================
+MEJORAS V9.1:
+  1. Filtro macro BTC 1H — no LONG en mercado bajista, no SHORT en alcista
+  2. Confirmación de volumen — solo operar con volumen > media (VR ≥ 1.0)
+  3. Confirmación de reversión RSI — RSI debe estar rebotando del extremo
+     (no entrar en caída libre, esperar el giro real)
 
-REGLAS SIMPLES:
+REGLAS BASE V9.0:
   1. Solo 8 pares con liquidez real
-  2. Señal: RSI extremo + dirección EMA (2 condiciones, no 10)
+  2. Señal: RSI extremo + dirección EMA
   3. SL dinámico ATR, TP = 2x SL siempre
   4. Máximo 3 posiciones, 2% capital por trade
-  5. Sin bloqueo por mercado lateral — siempre busca oportunidades
-  6. Guardian cierra si pierde más de 5%
+  5. Guardian cierra si pierde más de 5%
 """
 
 from binance.client import Client
@@ -24,7 +27,7 @@ from persistence import (
     generar_resumen_metricas, contar_trades_semana_actual
 )
 from capital_manager import CapitalManager
-from indicators import analizar_indicadores_completo
+from indicators import analizar_indicadores_completo, calcular_rsi
 
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)
@@ -32,7 +35,7 @@ sys.stdout.reconfigure(line_buffering=True)
 # ══════════════════════════════════════════
 # CONFIGURACIÓN — SIMPLE Y CLARA
 # ══════════════════════════════════════════
-BOT_VERSION   = "V9.0 Simple"
+BOT_VERSION   = "V9.1 Señal con Contexto"
 USAR_TESTNET  = os.getenv("BINANCE_TESTNET", "true").lower() in ("true","1","yes")
 
 # Pares seguros con liquidez real
@@ -72,13 +75,14 @@ stats = {
     "ganados": 0,
     "perdidos": 0,
 }
-_servidor_inicio = time.time()
-_cache_pos    = {"ts": 0, "data": None}
-_cache_info   = {"ts": 0, "data": None}
-_notificadas  = set()
-_sl_log       = {}
-client        = None
-cm            = None
+_servidor_inicio  = time.time()
+_cache_pos        = {"ts": 0, "data": None}
+_cache_info       = {"ts": 0, "data": None}
+_cache_btc_trend  = {"ts": 0, "data": "LATERAL"}
+_notificadas      = set()
+_sl_log           = {}
+client            = None
+cm                = None
 
 # ══════════════════════════════════════════
 # UTILIDADES
@@ -189,6 +193,29 @@ def set_leverage(symbol, lev):
             log(f"⚠️ Leverage {symbol}: {e}")
 
 # ══════════════════════════════════════════
+# TENDENCIA MACRO BTC 1H (cache 30 min)
+# ══════════════════════════════════════════
+def btc_tendencia_1h():
+    """Retorna la tendencia de BTC en 1H para filtrar entradas contra el mercado."""
+    now = time.time()
+    if now - _cache_btc_trend["ts"] < 1800:
+        return _cache_btc_trend["data"]
+    try:
+        v = velas("BTCUSDT", "1h", 200)
+        if not v or len(v) < 100:
+            return "LATERAL"
+        klines = [[x["timestamp"], x["open"], x["high"], x["low"], x["close"], x["volume"]]
+                  for x in v[:-1]]
+        ind = analizar_indicadores_completo(klines)
+        trend = (ind.get("tendencia_ema", "LATERAL") or "LATERAL").upper() if ind else "LATERAL"
+        _cache_btc_trend.update({"ts": now, "data": trend})
+        log(f"📈 BTC 1H macro: {trend}")
+        return trend
+    except Exception as e:
+        log(f"⚠️ btc_tendencia_1h: {e}")
+        return "LATERAL"
+
+# ══════════════════════════════════════════
 # GESTIÓN DE RIESGO DIARIO
 # ══════════════════════════════════════════
 def check_nuevo_dia(bal):
@@ -215,45 +242,60 @@ def puede_operar(bal):
     return True
 
 # ══════════════════════════════════════════
-# SEÑAL — SIMPLE (RSI + EMA)
+# SEÑAL V9.1 — RSI + EMA + CONTEXTO
 # ══════════════════════════════════════════
-def senal(ind):
+def senal(ind, rsi_prev=None, btc_trend="LATERAL"):
     """
-    Señal simple con 2 condiciones:
-    LONG:  RSI < 38  Y  tendencia EMA no bajista fuerte
-    SHORT: RSI > 62  Y  tendencia EMA no alcista fuerte
-
-    Sin bloqueo por mercado lateral.
-    Sin requerir 4 indicadores juntos.
+    V9.1 — Tres filtros adicionales sobre la señal base:
+      1. Filtro macro BTC: no LONG si BTC 1H es bajista, no SHORT si es alcista
+      2. Volumen: volumen_relativo >= 1.0 (operamos con participación real)
+      3. Reversión RSI: el RSI debe estar girando del extremo (no en caída/subida libre)
     """
     if not ind:
         return None, 0.0, "Sin datos"
 
-    rsi  = float(ind.get("rsi", 50))
-    tend = (ind.get("tendencia_ema","") or "").upper()
-    hist = float((ind.get("macd") or {}).get("histograma", 0))
+    rsi     = float(ind.get("rsi", 50))
+    tend    = (ind.get("tendencia_ema", "") or "").upper()
+    hist    = float((ind.get("macd") or {}).get("histograma", 0))
     atr_pct = float(ind.get("atr_percent", 0))
+    vol_rel = float(ind.get("volumen_relativo", 1.0))
 
-    # Filtro mínimo de volatilidad
+    # ── Filtro volatilidad ──
     if atr_pct < 0.20:
         return None, 0.0, f"Sin volatilidad (ATR={atr_pct:.2f}%)"
 
-    # LONG: RSI sobrevendido
+    # ── Filtro volumen ──
+    if vol_rel < 1.0:
+        return None, 0.0, f"Volumen bajo (VR={vol_rel:.2f}x — esperar participación)"
+
+    # ── LONG ──
     if rsi < RSI_SOBREVENTA:
-        # No entrar LONG si la tendencia mayor es fuertemente bajista
         if tend == "BAJISTA_FUERTE":
-            return None, 0.0, f"RSI={rsi:.0f} pero BAJISTA_FUERTE — skip"
-        conf = 0.85 if hist > 0 else 0.72
-        razon = f"RSI={rsi:.0f} sobrevendido | {tend} | conf={int(conf*100)}%"
+            return None, 0.0, f"RSI={rsi:.0f} pero par BAJISTA_FUERTE — skip"
+        # Filtro macro: no comprar si BTC cae en 1H
+        if btc_trend in ("BAJISTA_FUERTE", "BAJISTA"):
+            return None, 0.0, f"RSI={rsi:.0f} sobrevendido pero BTC 1H {btc_trend} — no LONG"
+        # Reversión: RSI debe estar subiendo (giro real, no caída libre)
+        if rsi_prev is not None and rsi <= rsi_prev:
+            return None, 0.0, f"RSI={rsi:.0f} sin giro alcista aún (prev={rsi_prev:.0f}) — esperar"
+        conf = 0.87 if hist > 0 else 0.74
+        razon = (f"RSI={rsi:.0f}↑ giro | tend={tend} | BTC={btc_trend} | "
+                 f"VR={vol_rel:.1f}x | conf={int(conf*100)}%")
         return "LONG", conf, razon
 
-    # SHORT: RSI sobrecomprado
+    # ── SHORT ──
     if rsi > RSI_SOBRECOMPRA:
-        # No entrar SHORT si la tendencia mayor es fuertemente alcista
         if tend == "ALCISTA_FUERTE":
-            return None, 0.0, f"RSI={rsi:.0f} pero ALCISTA_FUERTE — skip"
-        conf = 0.85 if hist < 0 else 0.72
-        razon = f"RSI={rsi:.0f} sobrecomprado | {tend} | conf={int(conf*100)}%"
+            return None, 0.0, f"RSI={rsi:.0f} pero par ALCISTA_FUERTE — skip"
+        # Filtro macro: no shortar si BTC sube en 1H
+        if btc_trend in ("ALCISTA_FUERTE", "ALCISTA"):
+            return None, 0.0, f"RSI={rsi:.0f} sobrecomprado pero BTC 1H {btc_trend} — no SHORT"
+        # Reversión: RSI debe estar cayendo (giro real, no subida libre)
+        if rsi_prev is not None and rsi >= rsi_prev:
+            return None, 0.0, f"RSI={rsi:.0f} sin giro bajista aún (prev={rsi_prev:.0f}) — esperar"
+        conf = 0.87 if hist < 0 else 0.74
+        razon = (f"RSI={rsi:.0f}↓ giro | tend={tend} | BTC={btc_trend} | "
+                 f"VR={vol_rel:.1f}x | conf={int(conf*100)}%")
         return "SHORT", conf, razon
 
     return None, 0.0, f"RSI={rsi:.0f} — zona neutral"
@@ -420,6 +462,9 @@ def analizar():
 
     log(f"🔍 Analizando {len(PARES)} pares | Monto/trade: ${monto:.2f}")
 
+    # Tendencia macro BTC — se consulta una vez por ciclo (cache 30 min)
+    btc_trend = btc_tendencia_1h()
+
     for symbol in PARES:
         if espacios <= 0:
             break
@@ -432,7 +477,7 @@ def analizar():
             if not v or len(v) < 100:
                 continue
 
-            # Calcular indicadores
+            # Calcular indicadores sobre velas completas (excluyendo vela en curso)
             klines = [[x["timestamp"],x["open"],x["high"],x["low"],x["close"],x["volume"]]
                       for x in v[:-1]]
             ind = analizar_indicadores_completo(klines)
@@ -442,8 +487,12 @@ def analizar():
             precio = float(ind["precio_actual"])
             atr    = float(ind.get("atr", 0))
 
-            # Señal simple
-            accion, conf, razon = senal(ind)
+            # RSI de 3 velas atrás para confirmar reversión (giro real, no impulso)
+            precios_cierre = [float(k[4]) for k in klines]
+            rsi_prev = calcular_rsi(precios_cierre[:-3]) if len(precios_cierre) > 20 else None
+
+            # Señal V9.1 con contexto
+            accion, conf, razon = senal(ind, rsi_prev, btc_trend)
             if not accion:
                 log(f"   ⏭️ {symbol}: {razon}")
                 continue
