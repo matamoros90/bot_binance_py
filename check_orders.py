@@ -5,7 +5,7 @@ import hashlib
 import requests
 from dotenv import load_dotenv
 
-load_dotenv('/Users/marlonmatamoros/Documents/Proyecto de Invercion BOTs/bot_binance_IA/.env')
+load_dotenv()
 api_key = os.getenv('BINANCE_API_KEY')
 api_secret = os.getenv('BINANCE_SECRET')
 testnet = os.getenv('BINANCE_TESTNET', 'True').lower() in ('true', '1', 'yes')

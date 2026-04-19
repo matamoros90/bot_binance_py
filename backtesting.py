@@ -1,5 +1,5 @@
 """
-V6.1: Motor de Backtesting Realista.
+V9.0: Motor de Backtesting Realista.
 Simula la estrategia del bot con datos históricos de Binance.
 Incluye fees y slippage reales para resultados más precisos.
 
@@ -77,191 +77,117 @@ def obtener_velas_historicas(client, symbol, intervalo, dias):
 
 def simular_estrategia(velas, config):
     """
-    Simula trades usando la estrategia del bot sobre datos históricos.
-    
-    Recorre las velas y en cada ventana de 200 velas:
-    1. Calcula los 14 indicadores
-    2. Aplica las mismas reglas del bot (RSI, EMA, pre-filtro)
-    3. Simula entrada/salida con TP/SL reales
+    Simula trades usando la estrategia V9.0 del bot sobre datos históricos.
+    Misma lógica que bot_binance.py: RSI extremo + filtro tendencia EMA.
     """
-    from bot_binance import (
-        calcular_rsi, calcular_ema, calcular_macd,
-        calcular_bollinger, calcular_atr,
-        obtener_tendencia_ema, CONFIANZA_MINIMA
-    )
-    
+    from indicators import analizar_indicadores_completo
+
+    # Thresholds V9.0 (iguales a bot_binance.py)
+    RSI_SOBREVENTA  = 38
+    RSI_SOBRECOMPRA = 62
+    ATR_MIN_PCT     = 0.20  # filtro mínimo de volatilidad
+    ATR_MULT_SL     = 1.5
+    TP_RATIO        = 2.0
+
     trades = []
     posicion_activa = None
-    
-    ventana = 200  # Misma ventana que el bot
-    
-    for i in range(ventana, len(velas), 4):  # Paso de 4 velas (simular análisis cada 4h)
-        # Tomar ventana de 200 velas
+    ventana = 200
+
+    for i in range(ventana, len(velas), 4):
         ventana_actual = velas[i - ventana:i]
-        precios_cierre = [v['close'] for v in ventana_actual]
-        
-        if len(precios_cierre) < ventana:
+        klines = [[v['timestamp'], v['open'], v['high'], v['low'], v['close'], v['volume']]
+                  for v in ventana_actual]
+
+        ind = analizar_indicadores_completo(klines)
+        if not ind:
             continue
-        
-        precio_actual = precios_cierre[-1]
-        
-        # Calcular indicadores (exactamente como el bot)
-        rsi = calcular_rsi(precios_cierre)
-        ema_20 = calcular_ema(precios_cierre, 20)
-        ema_50 = calcular_ema(precios_cierre, 50)
-        macd_data = calcular_macd(precios_cierre)
-        
-        tendencia = obtener_tendencia_ema(precio_actual, ema_20, ema_50,
-                                           calcular_ema(precios_cierre, 200))
-        
-        precios_100 = precios_cierre[-100:]
-        precio_max = max(precios_100)
-        precio_min = min(precios_100)
-        posicion_rango = ((precio_actual - precio_min) / (precio_max - precio_min) * 100) if precio_max != precio_min else 50
-        
-        # ATR para SL dinámico
-        highs = [v['high'] for v in ventana_actual]
-        lows = [v['low'] for v in ventana_actual]
-        closes = precios_cierre
-        atr = calcular_atr(highs, lows, closes)
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # VERIFICAR POSICIÓN ACTIVA — ¿Tocó TP o SL?
-        # ═══════════════════════════════════════════════════════════════════
+
+        precio_actual = float(ind['precio_actual'])
+        atr           = float(ind.get('atr', 0))
+        atr_pct       = float(ind.get('atr_percent', 0))
+        rsi           = float(ind.get('rsi', 50))
+        tend          = (ind.get('tendencia_ema', '') or '').upper()
+        hist          = float((ind.get('macd') or {}).get('histograma', 0))
+
+        # ── VERIFICAR POSICIÓN ACTIVA ──
         if posicion_activa:
             vela = velas[i]
-            hit_tp = False
-            hit_sl = False
-            
+            hit_tp = hit_sl = False
+
             if posicion_activa['side'] == 'LONG':
                 if vela['high'] >= posicion_activa['tp']:
                     hit_tp = True
                 if vela['low'] <= posicion_activa['sl']:
                     hit_sl = True
-            else:  # SHORT
+            else:
                 if vela['low'] <= posicion_activa['tp']:
                     hit_tp = True
                 if vela['high'] >= posicion_activa['sl']:
                     hit_sl = True
-            
-            if hit_sl:  # SL hit primero (peor caso)
-                pnl_pct_bruto = -abs(posicion_activa['entry'] - posicion_activa['sl']) / posicion_activa['entry'] * 100
-                # V6.1: Descontar fee round-trip + slippage de salida
-                costos_pct = (FEE + SLIPPAGE) * 100
-                pnl_pct = pnl_pct_bruto - costos_pct
-                trades.append({
-                    'entry_time': posicion_activa['entry_time'],
-                    'exit_time': vela['timestamp'],
-                    'side': posicion_activa['side'],
-                    'entry': posicion_activa['entry'],
-                    'exit': posicion_activa['sl'],
-                    'pnl_pct': round(pnl_pct, 2),
-                    'result': 'LOSS',
-                    'razon': posicion_activa['razon']
-                })
+
+            if hit_sl:
+                pnl_bruto = -abs(posicion_activa['entry'] - posicion_activa['sl']) / posicion_activa['entry'] * 100
+                pnl_pct = pnl_bruto - (FEE + SLIPPAGE) * 100
+                trades.append({'entry_time': posicion_activa['entry_time'], 'exit_time': vela['timestamp'],
+                                'side': posicion_activa['side'], 'entry': posicion_activa['entry'],
+                                'exit': posicion_activa['sl'], 'pnl_pct': round(pnl_pct, 2),
+                                'result': 'LOSS', 'razon': posicion_activa['razon']})
                 posicion_activa = None
             elif hit_tp:
-                pnl_pct_bruto = abs(posicion_activa['tp'] - posicion_activa['entry']) / posicion_activa['entry'] * 100
-                # V6.1: Descontar fee round-trip + slippage de salida
-                costos_pct = (FEE + SLIPPAGE) * 100
-                pnl_pct = pnl_pct_bruto - costos_pct
-                trades.append({
-                    'entry_time': posicion_activa['entry_time'],
-                    'exit_time': vela['timestamp'],
-                    'side': posicion_activa['side'],
-                    'entry': posicion_activa['entry'],
-                    'exit': posicion_activa['tp'],
-                    'pnl_pct': round(pnl_pct, 2),
-                    'result': 'WIN',
-                    'razon': posicion_activa['razon']
-                })
+                pnl_bruto = abs(posicion_activa['tp'] - posicion_activa['entry']) / posicion_activa['entry'] * 100
+                pnl_pct = pnl_bruto - (FEE + SLIPPAGE) * 100
+                trades.append({'entry_time': posicion_activa['entry_time'], 'exit_time': vela['timestamp'],
+                                'side': posicion_activa['side'], 'entry': posicion_activa['entry'],
+                                'exit': posicion_activa['tp'], 'pnl_pct': round(pnl_pct, 2),
+                                'result': 'WIN', 'razon': posicion_activa['razon']})
                 posicion_activa = None
-            
-            continue  # No abrir nueva posición si hay una activa
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # PRE-FILTRO (igual que V5.3)
-        # ═══════════════════════════════════════════════════════════════════
-        tendencia_str = tendencia.upper() if tendencia else ''
-        if 40 < rsi < 60 and 'LATERAL' in tendencia_str and 35 < posicion_rango < 65:
             continue
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # DECISIÓN DE TRADING (simulada, sin Gemini)
-        # Usa las mismas reglas que el bot impone post-IA
-        # ═══════════════════════════════════════════════════════════════════
-        accion = None
-        razon = ""
-        confianza = 0
-        
-        # Señal LONG
-        if rsi < 35 and 'ALCISTA' in tendencia_str and posicion_rango < 30:
-            accion = 'LONG'
-            confianza = 0.80
-            razon = f"RSI sobreventa ({rsi:.0f}), tendencia alcista, rango bajo ({posicion_rango:.0f}%)"
-        elif rsi < 25 and posicion_rango < 20:
-            accion = 'LONG'
-            confianza = 0.85
-            razon = f"RSI extremo ({rsi:.0f}), precio en mínimos ({posicion_rango:.0f}%)"
-        
-        # Señal SHORT
-        elif rsi > 65 and 'BAJISTA' in tendencia_str and posicion_rango > 70:
-            accion = 'SHORT'
-            confianza = 0.80
-            razon = f"RSI sobrecompra ({rsi:.0f}), tendencia bajista, rango alto ({posicion_rango:.0f}%)"
-        elif rsi > 75 and posicion_rango > 80:
-            accion = 'SHORT'
-            confianza = 0.85
-            razon = f"RSI extremo ({rsi:.0f}), precio en máximos ({posicion_rango:.0f}%)"
-        
-        # MACD confirma
-        if accion and macd_data['histograma'] != 0:
-            if accion == 'LONG' and macd_data['histograma'] > 0:
-                confianza += 0.05
-            elif accion == 'SHORT' and macd_data['histograma'] < 0:
-                confianza += 0.05
-        
-        # Validar contra tendencia
-        if accion == 'SHORT' and 'ALCISTA' in tendencia_str:
-            accion = None
-        if accion == 'LONG' and 'BAJISTA' in tendencia_str:
-            accion = None
-        
-        if not accion or confianza < CONFIANZA_MINIMA:
+
+        # ── SEÑAL V9.0 (idéntica a bot_binance.py) ──
+        if atr_pct < ATR_MIN_PCT:
             continue
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # ABRIR POSICIÓN SIMULADA
-        # ═══════════════════════════════════════════════════════════════════
-        tp_pct = config.get('tp', 0.035)
-        sl_pct = config.get('sl', 0.025)
-        
-        # SL dinámico con ATR
-        if atr > 0:
-            sl_distance = max(atr * 1.5, precio_actual * 0.015)
-        else:
-            sl_distance = precio_actual * sl_pct
-        
+
+        accion = razon = None
+        confianza = 0.0
+
+        if rsi < RSI_SOBREVENTA:
+            if tend == 'BAJISTA_FUERTE':
+                continue
+            confianza = 0.85 if hist > 0 else 0.72
+            accion = 'LONG'
+            razon = f"RSI={rsi:.0f} sobrevendido | {tend} | conf={int(confianza*100)}%"
+        elif rsi > RSI_SOBRECOMPRA:
+            if tend == 'ALCISTA_FUERTE':
+                continue
+            confianza = 0.85 if hist < 0 else 0.72
+            accion = 'SHORT'
+            razon = f"RSI={rsi:.0f} sobrecomprado | {tend} | conf={int(confianza*100)}%"
+
+        if not accion:
+            continue
+
+        # ── SL/TP con ATR (igual que bot) ──
+        dist_sl = max(atr * ATR_MULT_SL, precio_actual * 0.008)
+        dist_tp = dist_sl * TP_RATIO
+
         if accion == 'LONG':
-            # V6.1: Aplicar slippage de entrada (precio real = precio_actual + slippage)
             precio_entrada = precio_actual * (1 + SLIPPAGE)
-            tp_price = precio_entrada * (1 + tp_pct)
-            sl_price = precio_entrada - sl_distance
+            sl_price = precio_entrada - dist_sl
+            tp_price = precio_entrada + dist_tp
         else:
-            # V6.1: Aplicar slippage de entrada para SHORT (ejecución a precio menor)
             precio_entrada = precio_actual * (1 - SLIPPAGE)
-            tp_price = precio_entrada * (1 - tp_pct)
-            sl_price = precio_entrada + sl_distance
-        
+            sl_price = precio_entrada + dist_sl
+            tp_price = precio_entrada - dist_tp
+
         posicion_activa = {
             'side': accion,
-            'entry': precio_entrada,  # V6.1: precio con slippage aplicado
+            'entry': precio_entrada,
             'tp': tp_price,
             'sl': sl_price,
             'entry_time': velas[i]['timestamp'],
             'razon': razon
         }
-    
+
     return trades
 
 
@@ -269,7 +195,7 @@ def generar_reporte(trades, symbol, dias):
     """V6.1: Genera un reporte formateado incluyendo costos reales de fees y slippage."""
     
     print(f"\n{'='*60}")
-    print(f"📊 REPORTE BACKTESTING V6.1 (Fees+Slippage) — {symbol}")
+    print(f"📊 REPORTE BACKTESTING V9.0 (Fees+Slippage) — {symbol}")
     print(f"📅 Período: últimos {dias} días")
     print(f"💸 Fee Round-Trip: {FEE*100:.2f}% | Slippage: {SLIPPAGE*100:.3f}%")
     print(f"{'='*60}")
@@ -389,12 +315,12 @@ def generar_reporte(trades, symbol, dias):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Backtesting Bot Binance V5.3')
+    parser = argparse.ArgumentParser(description='Backtesting Bot Binance V9.0')
     parser.add_argument('--dias', type=int, default=30, help='Días de datos históricos (default: 30)')
     parser.add_argument('--symbol', type=str, default=None, help='Símbolo específico (ej: BTCUSDT)')
     args = parser.parse_args()
     
-    print(f"\n🔬 BACKTESTING BOT BINANCE V5.3")
+    print(f"\n🔬 BACKTESTING BOT BINANCE V9.0")
     print(f"📅 Período: últimos {args.dias} días")
     print(f"{'='*60}\n")
     
